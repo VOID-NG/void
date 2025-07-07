@@ -1,0 +1,479 @@
+// Prisma Schema for VOID Marketplace
+// Supports PostgreSQL with pgvector extension for AI embeddings
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ================================
+// ENUMS
+// ================================
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN  
+  MODERATOR
+  VENDOR
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+  PENDING_VERIFICATION
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  SOLD
+  REMOVED
+  REJECTED
+}
+
+enum ListingCondition {
+  NEW
+  LIKE_NEW
+  GOOD
+  FAIR
+  POOR
+}
+
+enum TransactionStatus {
+  INITIATED
+  ESCROW_PENDING
+  ESCROW_ACTIVE
+  PAYMENT_RELEASED
+  COMPLETED
+  DISPUTED
+  CANCELLED
+  REFUNDED
+}
+
+enum ChatStatus {
+  ACTIVE
+  ARCHIVED
+  BLOCKED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  OFFER
+  COUNTER_OFFER
+  OFFER_ACCEPTED
+  OFFER_REJECTED
+}
+
+enum NotificationType {
+  CHAT_MESSAGE
+  OFFER_RECEIVED
+  OFFER_ACCEPTED
+  OFFER_REJECTED
+  PAYMENT_RECEIVED
+  PRODUCT_SOLD
+  ADMIN_ALERT
+  SYSTEM_UPDATE
+}
+
+enum InteractionType {
+  VIEW
+  LIKE
+  SHARE
+  PURCHASE
+  CART_ADD
+  SEARCH_CLICK
+}
+
+enum SubscriptionPlan {
+  FREE
+  BASIC
+  PREMIUM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  PENDING
+}
+
+enum PromotionType {
+  PERCENTAGE_DISCOUNT
+  FIXED_AMOUNT
+  FREE_SHIPPING
+  BUY_ONE_GET_ONE
+}
+
+// ================================
+// USER MANAGEMENT
+// ================================
+
+model User {
+  id                String      @id @default(cuid())
+  email             String      @unique
+  username          String      @unique
+  password_hash     String
+  first_name        String?
+  last_name         String?
+  phone             String?
+  avatar_url        String?
+  bio               String?
+  location          String?
+  role              UserRole    @default(USER)
+  status            UserStatus  @default(PENDING_VERIFICATION)
+  is_verified       Boolean     @default(false)
+  email_verified_at DateTime?
+  last_login        DateTime?
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  // Vendor-specific fields
+  business_name     String?
+  business_address  String?
+  tax_id           String?
+  vendor_verified   Boolean     @default(false)
+
+  // Relationships
+  listings          Listing[]
+  sent_messages     Message[]   @relation("SentMessages")
+  received_chats    Chat[]      @relation("BuyerChats")
+  vendor_chats      Chat[]      @relation("VendorChats")
+  transactions_buyer Transaction[] @relation("BuyerTransactions")
+  transactions_vendor Transaction[] @relation("VendorTransactions")
+  reviews_given     Review[]    @relation("ReviewsGiven")
+  reviews_received  Review[]    @relation("ReviewsReceived")
+  notifications     Notification[]
+  interactions      UserInteraction[]
+  subscription      Subscription?
+  admin_actions     AdminAction[]
+
+  @@map("users")
+}
+
+// ================================
+// PRODUCT LISTINGS
+// ================================
+
+model Category {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  parent_id   String?
+  parent      Category? @relation("CategoryHierarchy", fields: [parent_id], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  listings    Listing[]
+  created_at  DateTime  @default(now())
+
+  @@map("categories")
+}
+
+model Listing {
+  id              String           @id @default(cuid())
+  title           String
+  description     String
+  price           Decimal          @db.Decimal(10, 2)
+  condition       ListingCondition
+  status          ListingStatus    @default(DRAFT)
+  category_id     String
+  vendor_id       String
+  quantity        Int              @default(1)
+  sku             String?
+  tags            String[]
+  weight          Float?
+  dimensions      String?          // JSON string: {"length": 10, "width": 5, "height": 3}
+  location        String?
+  is_negotiable   Boolean          @default(true)
+  is_featured     Boolean          @default(false)
+  views_count     Int              @default(0)
+  likes_count     Int              @default(0)
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+
+  // Relationships
+  category        Category         @relation(fields: [category_id], references: [id])
+  vendor          User             @relation(fields: [vendor_id], references: [id])
+  images          ListingImage[]
+  videos          ListingVideo[]
+  models_3d       Listing3DModel[]
+  embeddings      ListingEmbedding[]
+  chats           Chat[]
+  transactions    Transaction[]
+  reviews         Review[]
+  interactions    UserInteraction[]
+  promotion_items PromotionItem[]
+
+  @@map("listings")
+}
+
+model ListingImage {
+  id         String  @id @default(cuid())
+  listing_id String
+  url        String
+  alt_text   String?
+  is_primary Boolean @default(false)
+  order_pos  Int     @default(0)
+  file_size  Int?
+  created_at DateTime @default(now())
+
+  listing    Listing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@map("listing_images")
+}
+
+model ListingVideo {
+  id         String  @id @default(cuid())
+  listing_id String
+  url        String
+  thumbnail_url String?
+  duration   Int?    // Duration in seconds
+  file_size  Int?
+  created_at DateTime @default(now())
+
+  listing    Listing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@map("listing_videos")
+}
+
+model Listing3DModel {
+  id         String  @id @default(cuid())
+  listing_id String
+  url        String
+  file_type  String  // glb, obj, etc.
+  file_size  Int?
+  created_at DateTime @default(now())
+
+  listing    Listing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@map("listing_3d_models")
+}
+
+// ================================
+// AI EMBEDDINGS & SEARCH
+// ================================
+
+model ListingEmbedding {
+  id               String   @id @default(cuid())
+  listing_id       String   @unique
+  text_embedding   String?  // JSON array for vector storage
+  image_embedding  String?  // JSON array for CLIP embeddings
+  embedding_model  String?  // Model used for generation
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  listing          Listing  @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+
+  @@map("listing_embeddings")
+}
+
+model UserInteraction {
+  id              String          @id @default(cuid())
+  user_id         String
+  listing_id      String
+  interaction_type InteractionType
+  metadata        String?         // JSON for additional data
+  created_at      DateTime        @default(now())
+
+  user            User            @relation(fields: [user_id], references: [id])
+  listing         Listing         @relation(fields: [listing_id], references: [id])
+
+  @@map("user_interactions")
+}
+
+// ================================
+// CHAT & MESSAGING
+// ================================
+
+model Chat {
+  id               String     @id @default(cuid())
+  listing_id       String
+  buyer_id         String
+  vendor_id        String
+  status           ChatStatus @default(ACTIVE)
+  last_message_at  DateTime?
+  created_at       DateTime   @default(now())
+
+  listing          Listing    @relation(fields: [listing_id], references: [id])
+  buyer            User       @relation("BuyerChats", fields: [buyer_id], references: [id])
+  vendor           User       @relation("VendorChats", fields: [vendor_id], references: [id])
+  messages         Message[]
+
+  @@unique([listing_id, buyer_id])
+  @@map("chats")
+}
+
+model Message {
+  id          String      @id @default(cuid())
+  chat_id     String
+  sender_id   String
+  type        MessageType @default(TEXT)
+  content     String
+  offer_amount Decimal?   @db.Decimal(10, 2)
+  is_read     Boolean     @default(false)
+  created_at  DateTime    @default(now())
+
+  chat        Chat        @relation(fields: [chat_id], references: [id], onDelete: Cascade)
+  sender      User        @relation("SentMessages", fields: [sender_id], references: [id])
+
+  @@map("messages")
+}
+
+// ================================
+// TRANSACTIONS & ESCROW
+// ================================
+
+model Transaction {
+  id                 String            @id @default(cuid())
+  listing_id         String
+  buyer_id           String
+  vendor_id          String
+  quantity           Int               @default(1)
+  unit_price         Decimal           @db.Decimal(10, 2)
+  total_amount       Decimal           @db.Decimal(10, 2)
+  platform_fee       Decimal           @db.Decimal(10, 2) @default(0)
+  status             TransactionStatus @default(INITIATED)
+  payment_method     String?
+  payment_reference  String?
+  escrow_started_at  DateTime?
+  escrow_released_at DateTime?
+  completed_at       DateTime?
+  notes              String?
+  created_at         DateTime          @default(now())
+  updated_at         DateTime          @updatedAt
+
+  listing            Listing           @relation(fields: [listing_id], references: [id])
+  buyer              User              @relation("BuyerTransactions", fields: [buyer_id], references: [id])
+  vendor             User              @relation("VendorTransactions", fields: [vendor_id], references: [id])
+  reviews            Review[]
+
+  @@map("transactions")
+}
+
+// ================================
+// REVIEWS & RATINGS
+// ================================
+
+model Review {
+  id             String      @id @default(cuid())
+  transaction_id String?
+  listing_id     String
+  reviewer_id    String
+  reviewee_id    String
+  rating         Int         // 1-5 stars
+  comment        String?
+  is_verified    Boolean     @default(false)
+  created_at     DateTime    @default(now())
+
+  transaction    Transaction? @relation(fields: [transaction_id], references: [id])
+  listing        Listing     @relation(fields: [listing_id], references: [id])
+  reviewer       User        @relation("ReviewsGiven", fields: [reviewer_id], references: [id])
+  reviewee       User        @relation("ReviewsReceived", fields: [reviewee_id], references: [id])
+
+  @@unique([transaction_id, reviewer_id])
+  @@map("reviews")
+}
+
+// ================================
+// NOTIFICATIONS
+// ================================
+
+model Notification {
+  id         String           @id @default(cuid())
+  user_id    String
+  type       NotificationType
+  title      String
+  message    String
+  is_read    Boolean          @default(false)
+  metadata   String?          // JSON for additional data
+  created_at DateTime         @default(now())
+
+  user       User             @relation(fields: [user_id], references: [id])
+
+  @@map("notifications")
+}
+
+// ================================
+// SUBSCRIPTIONS & BILLING
+// ================================
+
+model Subscription {
+  id              String             @id @default(cuid())
+  user_id         String             @unique
+  plan            SubscriptionPlan
+  status          SubscriptionStatus @default(PENDING)
+  price           Decimal            @db.Decimal(10, 2)
+  billing_cycle   String             // monthly, yearly
+  current_period_start DateTime
+  current_period_end   DateTime
+  cancelled_at    DateTime?
+  created_at      DateTime           @default(now())
+  updated_at      DateTime           @updatedAt
+
+  user            User               @relation(fields: [user_id], references: [id])
+
+  @@map("subscriptions")
+}
+
+// ================================
+// PROMOTIONS & DISCOUNTS
+// ================================
+
+model Promotion {
+  id              String        @id @default(cuid())
+  code            String        @unique
+  name            String
+  description     String?
+  type            PromotionType
+  discount_value  Decimal       @db.Decimal(10, 2)
+  minimum_amount  Decimal?      @db.Decimal(10, 2)
+  usage_limit     Int?
+  usage_count     Int           @default(0)
+  valid_from      DateTime
+  valid_until     DateTime
+  is_active       Boolean       @default(true)
+  created_at      DateTime      @default(now())
+
+  items           PromotionItem[]
+
+  @@map("promotions")
+}
+
+model PromotionItem {
+  id           String    @id @default(cuid())
+  promotion_id String
+  listing_id   String
+  created_at   DateTime  @default(now())
+
+  promotion    Promotion @relation(fields: [promotion_id], references: [id])
+  listing      Listing   @relation(fields: [listing_id], references: [id])
+
+  @@unique([promotion_id, listing_id])
+  @@map("promotion_items")
+}
+
+// ================================
+// ADMIN & MODERATION
+// ================================
+
+model AdminAction {
+  id          String   @id @default(cuid())
+  admin_id    String
+  action_type String   // ban_user, approve_listing, resolve_dispute, etc.
+  target_type String   // user, listing, transaction, etc.
+  target_id   String
+  reason      String?
+  metadata    String?  // JSON for additional data
+  created_at  DateTime @default(now())
+
+  admin       User     @relation(fields: [admin_id], references: [id])
+
+  @@map("admin_actions")
+}
