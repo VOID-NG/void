@@ -1,0 +1,1 @@
+{ "name": "void-monorepo", "private": true, "workspaces": ["apps/*", "packages/*"] }
