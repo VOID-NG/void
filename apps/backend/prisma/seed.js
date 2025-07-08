@@ -1,5 +1,5 @@
 // apps/backend/prisma/seed.js
-// Database seeding script for VOID Marketplace
+// Database seeding script for VOID Marketplace - FIXED VERSION
 
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
@@ -11,81 +11,81 @@ async function main() {
 
   try {
     // ================================
-    // CATEGORIES
+    // CATEGORIES (UPDATED TO MATCH YOUR IMAGE)
     // ================================
     console.log('📂 Creating categories...');
 
     const categories = [
-    {
+      {
         id: 'cat_fashion',
         name: 'Fashion',
         description: 'Clothing, apparel, and fashion accessories for all styles'
-    },
-    {
+      },
+      {
         id: 'cat_jewelry',
         name: 'Jewelry',
         description: 'Rings, necklaces, bracelets, watches, and precious accessories'
-    },
-    {
+      },
+      {
         id: 'cat_beauty',
         name: 'Beauty',
         description: 'Cosmetics, skincare, haircare, and personal care products'
-    },
-    {
+      },
+      {
         id: 'cat_kids',
         name: 'Kids',
         description: 'Children\'s products, toys, baby items, and kids\' essentials'
-    },
-    {
+      },
+      {
         id: 'cat_health',
         name: 'Health',
         description: 'Health products, fitness equipment, and wellness items'
-    },
-    {
+      },
+      {
         id: 'cat_sports',
         name: 'Sports',
         description: 'Sports equipment, outdoor gear, and athletic accessories'
-    },
-    {
+      },
+      {
         id: 'cat_gaming',
         name: 'Gaming',
         description: 'Video games, gaming consoles, accessories, and collectibles'
-    },
-    {
+      },
+      {
         id: 'cat_electronics',
         name: 'Electronics',
         description: 'Phones, computers, gadgets, and electronic devices'
-    },
-    {
+      },
+      {
         id: 'cat_appliance',
         name: 'Appliance',
         description: 'Home appliances, kitchen equipment, and household devices'
-    },
-    {
+      },
+      {
         id: 'cat_office',
         name: 'Office',
         description: 'Office supplies, business equipment, and workplace essentials'
-    },
-    {
+      },
+      {
         id: 'cat_properties',
         name: 'Properties',
         description: 'Real estate, rentals, land, and property listings'
-    },
-    {
+      },
+      {
         id: 'cat_vehicles',
         name: 'Vehicles',
         description: 'Cars, motorcycles, boats, and automotive equipment'
-    },
-    {
+      },
+      {
         id: 'cat_industrial',
         name: 'Industrial',
         description: 'Industrial equipment, machinery, and commercial tools'
-    },
-    {
+      },
+      {
         id: 'cat_construction',
         name: 'Construction & Repairs',
         description: 'Construction tools, building materials, and repair equipment'
-    }
+      }
     ];
 
     for (const category of categories) {
@@ -240,7 +240,7 @@ async function main() {
     console.log(`✅ Created ${users.length} test users`);
 
     // ================================
-    // SAMPLE LISTINGS
+    // SAMPLE LISTINGS (UPDATED CATEGORY IDs)
     // ================================
     console.log('📝 Creating sample listings...');
 
@@ -252,7 +252,7 @@ async function main() {
         description: 'Brand new iPhone 15 Pro Max in Space Black color with 256GB storage. Still in original packaging with all accessories. Never used, received as a gift but prefer Android. Includes charger, cable, and documentation.',
         price: 1099.99,
         condition: 'NEW',
-        category_id: 'cat_electronics',
+        category_id: 'cat_electronics', // ✅ Valid category
         vendor_id: 'user_vendor_tech',
         quantity: 1,
         sku: 'IPHONE15PM256SB',
@@ -268,7 +268,7 @@ async function main() {
         description: 'Excellent condition MacBook Air with M2 chip, 8GB RAM, 256GB SSD. Used for light work for 6 months. No scratches, dents, or issues. Battery health at 95%. Includes original charger and box.',
         price: 899.99,
         condition: 'LIKE_NEW',
-        category_id: 'cat_electronics',
+        category_id: 'cat_electronics', // ✅ Valid category
         vendor_id: 'user_vendor_tech',
         quantity: 1,
         sku: 'MACBOOK-AIR-M2-256',
@@ -284,7 +284,7 @@ async function main() {
         description: 'High-performance gaming PC built 3 months ago. Features: AMD Ryzen 7 5800X, NVIDIA RTX 4070, 32GB DDR4 RAM, 1TB NVMe SSD, 2TB HDD. Perfect for gaming, streaming, and content creation. Runs all modern games at 1440p high settings.',
         price: 1299.99,
         condition: 'LIKE_NEW',
-        category_id: 'cat_electronics',
+        category_id: 'cat_gaming', // ✅ Updated to gaming
         vendor_id: 'user_vendor_tech',
         quantity: 1,
         tags: ['gaming', 'PC', 'RTX', 'Ryzen', 'custom build'],
@@ -301,7 +301,7 @@ async function main() {
         description: 'Authentic vintage Chanel little black dress from the 1980s. Size 8, excellent condition with minimal wear. Perfect for special occasions. Includes authentication certificate. A timeless piece for any wardrobe.',
         price: 1899.99,
         condition: 'GOOD',
-        category_id: 'cat_fashion',
+        category_id: 'cat_fashion', // ✅ Valid category
         vendor_id: 'user_vendor_fashion',
         quantity: 1,
         sku: 'CHANEL-DRESS-80S-8',
@@ -317,7 +317,7 @@ async function main() {
         description: 'Classic Air Jordan 1 in the iconic Chicago colorway from 2015 release. Size 10.5, worn handful of times, well maintained. Original box included. Small scuff on right toe but overall great condition.',
         price: 399.99,
         condition: 'GOOD',
-        category_id: 'cat_fashion',
+        category_id: 'cat_fashion', // ✅ Valid category
         vendor_id: 'user_vendor_fashion',
         quantity: 1,
         sku: 'AJ1-CHICAGO-2015-105',
@@ -327,35 +327,87 @@ async function main() {
         is_featured: false,
         status: 'ACTIVE'
       },
+      {
+        id: 'listing_luxury_watch',
+        title: 'Rolex Submariner Date - Stainless Steel',
+        description: 'Authentic Rolex Submariner with date function. Purchased in 2021, excellent condition. Includes original box, papers, and warranty card. Service history available. Perfect for collectors and enthusiasts.',
+        price: 12999.99,
+        condition: 'LIKE_NEW',
+        category_id: 'cat_jewelry', // ✅ Updated to jewelry
+        vendor_id: 'user_vendor_fashion',
+        quantity: 1,
+        sku: 'ROLEX-SUB-DATE-SS',
+        tags: ['Rolex', 'watch', 'luxury', 'Submariner', 'Swiss'],
+        location: 'New York, NY',
+        is_negotiable: false,
+        is_featured: true,
+        status: 'ACTIVE'
+      },
+
+      // Beauty Product
+      {
+        id: 'listing_skincare_set',
+        title: 'Premium Korean Skincare Set - 10 Steps',
+        description: 'Complete Korean skincare routine with 10 products. Includes cleanser, toner, essence, serums, moisturizer, and sunscreen. All products are new and sealed. Perfect for achieving glass skin.',
+        price: 299.99,
+        condition: 'NEW',
+        category_id: 'cat_beauty', // ✅ New beauty category
+        vendor_id: 'user_vendor_fashion',
+        quantity: 3,
+        sku: 'KOREAN-SKINCARE-10',
+        tags: ['skincare', 'Korean', 'beauty', 'routine', 'glass skin'],
+        location: 'Los Angeles, CA',
+        is_negotiable: true,
+        is_featured: false,
+        status: 'ACTIVE'
+      },
+
+      // Kids Product  
+      {
+        id: 'listing_kids_bike',
+        title: 'Kids Mountain Bike - 20 inch wheels',
+        description: 'High-quality kids mountain bike with 20-inch wheels, suitable for ages 6-10. Features front suspension, 7-speed gear system, and safety reflectors. Used for one summer, excellent condition.',
+        price: 199.99,
+        condition: 'GOOD',
+        category_id: 'cat_kids', // ✅ New kids category
+        vendor_id: 'user_vendor_tech',
+        quantity: 1,
+        sku: 'KIDS-MTB-20',
+        tags: ['bike', 'kids', 'mountain bike', 'bicycle', 'outdoor'],
+        location: 'Denver, CO',
+        is_negotiable: true,
+        is_featured: false,
+        status: 'ACTIVE'
+      },
 
       // Pending Vendor Listings (will be pending approval)
       {
-        id: 'listing_pending_watch',
-        title: 'Rolex Submariner - Date 116610LN',
-        description: 'Authentic Rolex Submariner with date, purchased in 2020. Excellent condition, serviced last year. Includes box, papers, and warranty card. Perfect timepiece for collectors.',
-        price: 8999.99,
+        id: 'listing_pending_equipment',
+        title: 'Professional Camera Equipment Bundle',
+        description: 'Complete professional photography setup including DSLR camera, multiple lenses, tripod, lighting equipment, and carrying case. Perfect for photographers starting their business.',
+        price: 2499.99,
         condition: 'LIKE_NEW',
-        category_id: 'cat_collectibles',
+        category_id: 'cat_electronics', // ✅ Valid category
         vendor_id: 'user_vendor_pending',
         quantity: 1,
-        tags: ['Rolex', 'watch', 'luxury', 'Submariner', 'Swiss'],
+        tags: ['camera', 'photography', 'professional', 'DSLR'],
         location: 'Austin, TX',
-        is_negotiable: false,
+        is_negotiable: true,
         is_featured: false,
         status: 'PENDING_APPROVAL'
       },
 
       // Draft Listing
       {
-        id: 'listing_draft_guitar',
-        title: 'Fender Stratocaster Electric Guitar',
-        description: 'Classic Fender Stratocaster in sunburst finish. Great condition, recently restrung.',
-        price: 599.99,
+        id: 'listing_draft_office',
+        title: 'Standing Desk with Monitor Arm',
+        description: 'Adjustable standing desk with built-in monitor arm. Perfect for home office setup.',
+        price: 399.99,
         condition: 'GOOD',
-        category_id: 'cat_other',
+        category_id: 'cat_office', // ✅ New office category
         vendor_id: 'user_vendor_tech',
         quantity: 1,
-        tags: ['guitar', 'Fender', 'music'],
+        tags: ['desk', 'office', 'standing desk', 'furniture'],
         location: 'San Francisco, CA',
         is_negotiable: true,
         is_featured: false,
@@ -536,7 +588,7 @@ async function main() {
         user_id: 'user_vendor_pending',
         type: 'ADMIN_ALERT',
         title: 'Listing Under Review',
-        message: 'Your listing "Rolex Submariner" is being reviewed by our team',
+        message: 'Your listing "Professional Camera Equipment Bundle" is being reviewed by our team',
         is_read: false
       }
     ];

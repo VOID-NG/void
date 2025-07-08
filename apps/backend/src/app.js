@@ -9,6 +9,7 @@ const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
+const { prisma, initializeDatabase } = require('./config/db');
 require('dotenv').config();
 
 // Import middleware
@@ -17,6 +18,15 @@ const logger = require('./utils/logger');
 
 // Import routes
 const routes = require('./routes');
+
+// Initialize database connection
+initializeDatabase()
+    .then(() => {
+      console.log('✅ Database connected successfully');
+    })
+    .catch((error) => {
+      console.error('❌ Database connection failed:', error.message);
+    });
 
 // Initialize Express app
 const app = express();
@@ -242,8 +252,8 @@ const gracefulShutdown = (signal) => {
     logger.info('HTTP server closed');
     
     // Close database connections
-    // prisma.$disconnect() will be called here when database is set up
-    
+    prisma.$disconnect();
+
     logger.info('Graceful shutdown completed');
     process.exit(0);
   });
