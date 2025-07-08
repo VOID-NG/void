@@ -241,17 +241,23 @@ $$ LANGUAGE plpgsql;
 
 -- Insert default categories (if they don't exist)
 INSERT INTO categories (id, name, description) VALUES 
-('cat_electronics', 'Electronics', 'Phones, computers, gadgets and electronic devices'),
-('cat_fashion', 'Fashion & Apparel', 'Clothing, shoes, accessories and fashion items'),
-('cat_home', 'Home & Garden', 'Furniture, decor, appliances and home improvement'),
-('cat_automotive', 'Automotive', 'Cars, motorcycles, parts and automotive accessories'),
-('cat_sports', 'Sports & Recreation', 'Sports equipment, outdoor gear and recreational items'),
-('cat_books', 'Books & Media', 'Books, movies, music and educational materials'),
-('cat_health', 'Health & Beauty', 'Skincare, makeup, health products and wellness items'),
-('cat_toys', 'Toys & Games', 'Children toys, board games and gaming equipment'),
-('cat_collectibles', 'Collectibles & Art', 'Antiques, collectibles, artwork and vintage items'),
-('cat_other', 'Other', 'Items that dont fit in other categories')
-ON CONFLICT (id) DO NOTHING;
+('cat_fashion', 'Fashion', 'Clothing, apparel, and fashion accessories for all styles'),
+('cat_jewelry', 'Jewelry', 'Rings, necklaces, bracelets, watches, and precious accessories'),
+('cat_beauty', 'Beauty', 'Cosmetics, skincare, haircare, and personal care products'),
+('cat_kids', 'Kids', 'Childrens products, toys, baby items, and kids essentials'),
+('cat_health', 'Health', 'Health products, fitness equipment, and wellness items'),
+('cat_sports', 'Sports', 'Sports equipment, outdoor gear, and athletic accessories'),
+('cat_gaming', 'Gaming', 'Video games, gaming consoles, accessories, and collectibles'),
+('cat_electronics', 'Electronics', 'Phones, computers, gadgets, and electronic devices'),
+('cat_appliance', 'Appliance', 'Home appliances, kitchen equipment, and household devices'),
+('cat_office', 'Office', 'Office supplies, business equipment, and workplace essentials'),
+('cat_properties', 'Properties', 'Real estate, rentals, land, and property listings'),
+('cat_vehicles', 'Vehicles', 'Cars, motorcycles, boats, and automotive equipment'),
+('cat_industrial', 'Industrial', 'Industrial equipment, machinery, and commercial tools'),
+('cat_construction', 'Construction & Repairs', 'Construction tools, building materials, and repair equipment')
+ON CONFLICT (id) DO UPDATE SET 
+  name = EXCLUDED.name,
+  description = EXCLUDED.description;
 
 -- Create default super admin user (password: Admin123!)
 -- Note: In production, this should be created through a secure process

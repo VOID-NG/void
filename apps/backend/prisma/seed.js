@@ -16,56 +16,76 @@ async function main() {
     console.log('📂 Creating categories...');
 
     const categories = [
-      {
+    {
+        id: 'cat_fashion',
+        name: 'Fashion',
+        description: 'Clothing, apparel, and fashion accessories for all styles'
+    },
+    {
+        id: 'cat_jewelry',
+        name: 'Jewelry',
+        description: 'Rings, necklaces, bracelets, watches, and precious accessories'
+    },
+    {
+        id: 'cat_beauty',
+        name: 'Beauty',
+        description: 'Cosmetics, skincare, haircare, and personal care products'
+    },
+    {
+        id: 'cat_kids',
+        name: 'Kids',
+        description: 'Children\'s products, toys, baby items, and kids\' essentials'
+    },
+    {
+        id: 'cat_health',
+        name: 'Health',
+        description: 'Health products, fitness equipment, and wellness items'
+    },
+    {
+        id: 'cat_sports',
+        name: 'Sports',
+        description: 'Sports equipment, outdoor gear, and athletic accessories'
+    },
+    {
+        id: 'cat_gaming',
+        name: 'Gaming',
+        description: 'Video games, gaming consoles, accessories, and collectibles'
+    },
+    {
         id: 'cat_electronics',
         name: 'Electronics',
-        description: 'Phones, computers, gadgets and electronic devices'
-      },
-      {
-        id: 'cat_fashion',
-        name: 'Fashion & Apparel',
-        description: 'Clothing, shoes, accessories and fashion items'
-      },
-      {
-        id: 'cat_home',
-        name: 'Home & Garden',
-        description: 'Furniture, decor, appliances and home improvement'
-      },
-      {
-        id: 'cat_automotive',
-        name: 'Automotive',
-        description: 'Cars, motorcycles, parts and automotive accessories'
-      },
-      {
-        id: 'cat_sports',
-        name: 'Sports & Recreation',
-        description: 'Sports equipment, outdoor gear and recreational items'
-      },
-      {
-        id: 'cat_books',
-        name: 'Books & Media',
-        description: 'Books, movies, music and educational materials'
-      },
-      {
-        id: 'cat_health',
-        name: 'Health & Beauty',
-        description: 'Skincare, makeup, health products and wellness items'
-      },
-      {
-        id: 'cat_toys',
-        name: 'Toys & Games',
-        description: 'Children toys, board games and gaming equipment'
-      },
-      {
-        id: 'cat_collectibles',
-        name: 'Collectibles & Art',
-        description: 'Antiques, collectibles, artwork and vintage items'
-      },
-      {
-        id: 'cat_other',
-        name: 'Other',
-        description: 'Items that don\'t fit in other categories'
-      }
+        description: 'Phones, computers, gadgets, and electronic devices'
+    },
+    {
+        id: 'cat_appliance',
+        name: 'Appliance',
+        description: 'Home appliances, kitchen equipment, and household devices'
+    },
+    {
+        id: 'cat_office',
+        name: 'Office',
+        description: 'Office supplies, business equipment, and workplace essentials'
+    },
+    {
+        id: 'cat_properties',
+        name: 'Properties',
+        description: 'Real estate, rentals, land, and property listings'
+    },
+    {
+        id: 'cat_vehicles',
+        name: 'Vehicles',
+        description: 'Cars, motorcycles, boats, and automotive equipment'
+    },
+    {
+        id: 'cat_industrial',
+        name: 'Industrial',
+        description: 'Industrial equipment, machinery, and commercial tools'
+    },
+    {
+        id: 'cat_construction',
+        name: 'Construction & Repairs',
+        description: 'Construction tools, building materials, and repair equipment'
+    }
     ];
 
     for (const category of categories) {

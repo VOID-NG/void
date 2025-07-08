@@ -8,16 +8,16 @@ const logger = require('../utils/logger');
 // Import route modules
 const authRoutes = require('./authRoutes');
 const listingRoutes = require('./listingRoutes');
-const searchRoutes = require('./searchRoutes');
-const recommendationRoutes = require('./recommendationRoutes');
-const chatRoutes = require('./chatRoutes');
-const messageRoutes = require('./messageRoutes');
-const transactionRoutes = require('./transactionRoutes');
-const reviewRoutes = require('./reviewRoutes');
-const notificationRoutes = require('./notificationRoutes');
-const promotionRoutes = require('./promotionRoutes');
-const subscriptionRoutes = require('./subscriptionRoutes');
-const adminRoutes = require('./adminRoutes');
+// const searchRoutes = require('./searchRoutes'); // TODO: Not implemented yet
+// const recommendationRoutes = require('./recommendationRoutes'); // TODO: Not implemented yet  
+// const chatRoutes = require('./chatRoutes'); // TODO: Not implemented yet
+// const messageRoutes = require('./messageRoutes'); // TODO: Not implemented yet
+// const transactionRoutes = require('./transactionRoutes'); // TODO: Not implemented yet
+// const reviewRoutes = require('./reviewRoutes'); // TODO: Not implemented yet
+// const notificationRoutes = require('./notificationRoutes'); // TODO: Not implemented yet
+// const promotionRoutes = require('./promotionRoutes'); // TODO: Not implemented yet
+// const subscriptionRoutes = require('./subscriptionRoutes'); // TODO: Not implemented yet
+// const adminRoutes = require('./adminRoutes'); // TODO: Not implemented yet
 
 // Initialize router
 const router = express.Router();
@@ -67,7 +67,15 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: API_CONFIG.VERSION,
     environment: process.env.NODE_ENV || 'development',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    features: {
+      authentication: '✅ Active',
+      listings: '✅ Active',
+      search: '🚧 Coming Soon',
+      chat: '🚧 Coming Soon',
+      transactions: '🚧 Coming Soon',
+      admin: '🚧 Partial'
+    }
   });
 });
 
@@ -86,79 +94,91 @@ router.get('/docs', (req, res) => {
       endpoints: '/api/v1/docs/endpoints'
     },
     features: [
-      'User Authentication & Authorization',
-      'Product Listings with Media Upload',
-      'AI-Powered Image Search',
-      'Fuzzy Text Search & Autocomplete',
-      'Smart Recommendations',
-      'Real-time Chat & Negotiations',
-      'Escrow Transaction System',
-      'Review & Rating System',
-      'Notifications & Alerts',
-      'Promotions & Discounts',
-      'Subscription Management',
-      'Admin Dashboard API'
+      'User Authentication & Authorization ✅',
+      'Product Listings with Media Upload ✅',
+      'AI-Powered Image Search 🚧',
+      'Fuzzy Text Search & Autocomplete 🚧',
+      'Smart Recommendations 🚧',
+      'Real-time Chat & Negotiations 🚧',
+      'Escrow Transaction System 🚧',
+      'Review & Rating System 🚧',
+      'Notifications & Alerts 🚧',
+      'Promotions & Discounts 🚧',
+      'Subscription Management 🚧',
+      'Admin Dashboard API 🚧'
     ],
     endpoints: {
       auth: {
         base: '/auth',
-        description: 'Authentication and user management',
-        methods: ['POST', 'GET', 'PUT', 'PATCH']
+        description: 'Authentication and user management ✅',
+        methods: ['POST', 'GET', 'PUT', 'PATCH'],
+        status: 'Active'
       },
       listings: {
         base: '/listings',
-        description: 'Product listing management',
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+        description: 'Product listing management ✅',
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        status: 'Active'
       },
       search: {
         base: '/search',
         description: 'Text and image-based search',
-        methods: ['GET', 'POST']
+        methods: ['GET', 'POST'],
+        status: 'Not Implemented'
       },
       recommendations: {
         base: '/recommendations',
         description: 'AI-powered product recommendations',
-        methods: ['GET']
+        methods: ['GET'],
+        status: 'Not Implemented'
       },
       chat: {
         base: '/chat',
         description: 'Chat thread management',
-        methods: ['GET', 'POST', 'PATCH']
+        methods: ['GET', 'POST', 'PATCH'],
+        status: 'Not Implemented'
       },
       messages: {
         base: '/messages',
         description: 'Chat message handling',
-        methods: ['GET', 'POST', 'PUT']
+        methods: ['GET', 'POST', 'PUT'],
+        status: 'Not Implemented'
       },
       transactions: {
         base: '/transactions',
         description: 'Payment and escrow management',
-        methods: ['GET', 'POST', 'PUT', 'PATCH']
+        methods: ['GET', 'POST', 'PUT', 'PATCH'],
+        status: 'Not Implemented'
       },
       reviews: {
         base: '/reviews',
         description: 'Review and rating system',
-        methods: ['GET', 'POST', 'PUT', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        status: 'Not Implemented'
       },
       notifications: {
         base: '/notifications',
         description: 'User notification management',
-        methods: ['GET', 'POST', 'PATCH']
+        methods: ['GET', 'POST', 'PATCH'],
+        status: 'Not Implemented'
       },
       promotions: {
         base: '/promotions',
         description: 'Discount and promotion management',
-        methods: ['GET', 'POST', 'PUT', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        status: 'Not Implemented'
       },
       subscriptions: {
         base: '/subscriptions',
         description: 'Vendor subscription management',
-        methods: ['GET', 'POST', 'PUT', 'PATCH']
+        methods: ['GET', 'POST', 'PUT', 'PATCH'],
+        status: 'Not Implemented'
       },
       admin: {
         base: '/admin',
         description: 'Administrative functions',
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        status: 'Partial Implementation'
       }
     }
   });
@@ -169,8 +189,6 @@ router.get('/docs', (req, res) => {
 // ================================
 
 router.get('/docs/endpoints', (req, res) => {
-  // This would normally be generated automatically from route definitions
-  // For now, return a static structure
   res.json({
     version: API_CONFIG.VERSION,
     baseUrl: `/api/${API_CONFIG.VERSION}`,
@@ -184,103 +202,91 @@ router.get('/docs/endpoints', (req, res) => {
         logout: 'POST /auth/logout'
       }
     },
-    endpoints: {
-      // Auth endpoints
+    available_endpoints: {
+      // ✅ AUTH ENDPOINTS (ACTIVE)
       'POST /auth/register': {
         description: 'Register new user account',
         authentication: false,
-        body: ['email', 'username', 'password', 'first_name', 'last_name']
+        body: ['email', 'username', 'password', 'first_name', 'last_name'],
+        status: '✅ Active'
       },
       'POST /auth/login': {
         description: 'User login',
         authentication: false,
-        body: ['email', 'password']
+        body: ['email', 'password'],
+        status: '✅ Active'
       },
       'GET /auth/profile': {
         description: 'Get user profile',
-        authentication: true
+        authentication: true,
+        status: '✅ Active'
+      },
+      'POST /auth/logout': {
+        description: 'User logout',
+        authentication: true,
+        status: '✅ Active'
       },
       
-      // Listing endpoints
+      // ✅ LISTING ENDPOINTS (ACTIVE)
       'GET /listings': {
         description: 'Get paginated listings',
         authentication: false,
-        query: ['page', 'limit', 'category', 'search', 'minPrice', 'maxPrice']
+        query: ['page', 'limit', 'category', 'search', 'minPrice', 'maxPrice'],
+        status: '✅ Active'
       },
       'POST /listings': {
         description: 'Create new listing',
         authentication: true,
         body: ['title', 'description', 'price', 'category_id'],
-        files: ['images', 'videos', 'models']
+        files: ['images', 'videos', 'models'],
+        status: '✅ Active'
       },
       'GET /listings/:id': {
         description: 'Get listing details',
-        authentication: false
+        authentication: false,
+        status: '✅ Active'
       },
       'PUT /listings/:id': {
         description: 'Update listing',
         authentication: true,
-        ownership: 'vendor_id'
+        ownership: 'vendor_id',
+        status: '✅ Active'
       },
       
-      // Search endpoints
+      // 🚧 NOT IMPLEMENTED YET
       'GET /search': {
         description: 'Text-based search with autocomplete',
         authentication: false,
-        query: ['q', 'page', 'limit', 'filters']
+        query: ['q', 'page', 'limit', 'filters'],
+        status: '🚧 Not Implemented'
       },
       'POST /search/image': {
         description: 'Image-based search',
         authentication: false,
-        files: ['image']
+        files: ['image'],
+        status: '🚧 Not Implemented'
       },
-      
-      // Recommendations
       'GET /recommendations/trending': {
         description: 'Get trending products',
-        authentication: false
+        authentication: false,
+        status: '🚧 Not Implemented'
       },
-      'GET /recommendations/similar/:listingId': {
-        description: 'Get similar products',
-        authentication: false
-      },
-      'GET /recommendations/for-user': {
-        description: 'Get personalized recommendations',
-        authentication: true
-      },
-      
-      // Chat endpoints
       'GET /chat': {
         description: 'Get user chat threads',
-        authentication: true
-      },
-      'POST /chat': {
-        description: 'Start new chat',
         authentication: true,
-        body: ['listing_id', 'message']
-      },
-      
-      // Transaction endpoints
-      'GET /transactions': {
-        description: 'Get user transactions',
-        authentication: true
+        status: '🚧 Not Implemented'
       },
       'POST /transactions': {
         description: 'Create new transaction',
         authentication: true,
-        body: ['listing_id', 'quantity', 'offer_amount']
+        body: ['listing_id', 'quantity', 'offer_amount'],
+        status: '🚧 Not Implemented'
       },
-      
-      // Admin endpoints (require admin role)
       'GET /admin/users': {
         description: 'Get all users',
         authentication: true,
-        role: 'ADMIN'
-      },
-      'GET /admin/analytics': {
-        description: 'Get system analytics',
-        authentication: true,
-        role: 'ADMIN'
+        role: 'ADMIN',
+        status: '🚧 Not Implemented'
       }
     }
   });
@@ -290,29 +296,100 @@ router.get('/docs/endpoints', (req, res) => {
 // MOUNT ROUTE MODULES
 // ================================
 
-// Authentication routes
+// ✅ ACTIVE ROUTES
 router.use('/auth', authRoutes);
-
-// Core marketplace routes
 router.use('/listings', listingRoutes);
-router.use('/search', searchRoutes);
-router.use('/recommendations', recommendationRoutes);
 
-// Communication routes
-router.use('/chat', chatRoutes);
-router.use('/messages', messageRoutes);
+// 🚧 PLACEHOLDER ROUTES (Not implemented yet)
+router.use('/search', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Search system will be available soon',
+    eta: 'Next development phase'
+  });
+});
 
-// Transaction routes
-router.use('/transactions', transactionRoutes);
-router.use('/reviews', reviewRoutes);
+router.use('/recommendations', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented', 
+    message: 'AI recommendations will be available soon',
+    eta: 'Next development phase'
+  });
+});
 
-// User features
-router.use('/notifications', notificationRoutes);
-router.use('/promotions', promotionRoutes);
-router.use('/subscriptions', subscriptionRoutes);
+router.use('/chat', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Chat system will be available soon',
+    eta: 'Next development phase'
+  });
+});
 
-// Administrative routes
-router.use('/admin', adminRoutes);
+router.use('/messages', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Messaging system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/transactions', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Transaction system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/reviews', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Review system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/notifications', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Notification system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/promotions', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Promotion system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/subscriptions', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Subscription system will be available soon',
+    eta: 'Next development phase'
+  });
+});
+
+router.use('/admin', (req, res) => {
+  res.status(501).json({
+    success: false,
+    error: 'Feature not implemented',
+    message: 'Admin dashboard will be available soon',
+    eta: 'Next development phase'
+  });
+});
 
 // ================================
 // ERROR HANDLING FOR ROUTES
@@ -324,7 +401,17 @@ router.use('*', (req, res) => {
     success: false,
     error: 'API endpoint not found',
     message: `The endpoint ${req.method} ${req.originalUrl} does not exist`,
-    availableEndpoints: '/api/v1/docs/endpoints'
+    availableEndpoints: '/api/v1/docs/endpoints',
+    activeFeatures: {
+      auth: '✅ /api/v1/auth/*',
+      listings: '✅ /api/v1/listings/*'
+    },
+    comingSoon: {
+      search: '🚧 /api/v1/search/*',
+      chat: '🚧 /api/v1/chat/*',
+      transactions: '🚧 /api/v1/transactions/*',
+      admin: '🚧 /api/v1/admin/*'
+    }
   });
 });
 
