@@ -142,6 +142,10 @@ model User {
   tax_id           String?
   vendor_verified   Boolean     @default(false)
 
+  // New search-related relations
+  search_analytics     SearchAnalytics[]
+  search_preferences   UserSearchPreference?
+
   // Relationships
   listings          Listing[]
   sent_messages     Message[]   @relation("SentMessages")
@@ -173,6 +177,9 @@ model Category {
   listings    Listing[]
   created_at  DateTime  @default(now())
 
+  // New search-related relations
+  search_suggestions SearchSuggestion[]
+
   @@map("categories")
 }
 
@@ -198,6 +205,11 @@ model Listing {
   created_at      DateTime         @default(now())
   updated_at      DateTime         @updatedAt
 
+  // New search-related fields
+  view_count           Int    @default(0)
+  click_count          Int    @default(0)
+  search_rank_score    Float? // For search result ranking
+  
   // Relationships
   category        Category         @relation(fields: [category_id], references: [id])
   vendor          User             @relation(fields: [vendor_id], references: [id])
@@ -210,6 +222,9 @@ model Listing {
   reviews         Review[]
   interactions    UserInteraction[]
   promotion_items PromotionItem[]
+
+  // New search-related relations
+  search_clicks   SearchAnalytics[] @relation("SearchAnalyticsClickedListing")
 
   @@map("listings")
 }
@@ -257,21 +272,28 @@ model Listing3DModel {
 }
 
 // ================================
-// AI EMBEDDINGS & SEARCH
+// AI EMBEDDINGS & SEARCH (FIXED)
 // ================================
 
 model ListingEmbedding {
-  id               String   @id @default(cuid())
-  listing_id       String   @unique
-  text_embedding   String?  // JSON array for vector storage
-  image_embedding  String?  // JSON array for CLIP embeddings
-  embedding_model  String?  // Model used for generation
+  id               String   @id @default(cuid())    // ← FIXED: Changed from uuid() @db.Uuid to cuid()
+  listing_id       String                           // ← FIXED: Removed @db.Uuid
+  embedding_type   String   // 'text', 'image', 'combined'
+  embedding_vector String   // JSON string of vector array (Prisma doesn't support vector type directly)
+  source_content   String?
+  source_url       String?
+  confidence_score Float    @default(1.0)
+  model_version    String   @default("text-embedding-ada-002")
   created_at       DateTime @default(now())
   updated_at       DateTime @updatedAt
 
-  listing          Listing  @relation(fields: [listing_id], references: [id], onDelete: Cascade)
+  // Relations
+  listing Listing @relation(fields: [listing_id], references: [id], onDelete: Cascade)
 
   @@map("listing_embeddings")
+  @@unique([listing_id, embedding_type, source_url])
+  @@index([listing_id])
+  @@index([embedding_type])
 }
 
 model UserInteraction {
@@ -286,6 +308,79 @@ model UserInteraction {
   listing         Listing         @relation(fields: [listing_id], references: [id])
 
   @@map("user_interactions")
+}
+
+// ================================
+// SEARCH ANALYTICS MODEL (FIXED)
+// ================================
+
+model SearchAnalytics {
+  id               String   @id @default(cuid())    // ← FIXED: Changed from uuid() @db.Uuid to cuid()
+  user_id          String?                          // ← FIXED: Removed @db.Uuid
+  query_text       String?
+  query_type       String   @default("text") // 'text', 'image', 'voice', 'combined'
+  filters_applied  Json     @default("{}")
+  results_count    Int      @default(0)
+  clicked_result_id String?                         // ← FIXED: Removed @db.Uuid
+  session_id       String?
+  ip_address       String?
+  user_agent       String?
+  response_time_ms Int?
+  created_at       DateTime @default(now())
+
+  // Relations
+  user            User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  clicked_listing Listing? @relation("SearchAnalyticsClickedListing", fields: [clicked_result_id], references: [id], onDelete: SetNull)
+
+  @@map("search_analytics")
+  @@index([user_id])
+  @@index([query_type])
+  @@index([created_at])
+}
+
+// ================================
+// SEARCH SUGGESTIONS MODEL (FIXED)
+// ================================
+
+model SearchSuggestion {
+  id              String    @id @default(cuid())    // ← FIXED: Changed from uuid() @db.Uuid to cuid()
+  suggestion_text String    @unique
+  search_count    Int       @default(1)
+  category_id     String?                           // ← FIXED: Removed @db.Uuid
+  is_trending     Boolean   @default(false)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  // Relations
+  category Category? @relation(fields: [category_id], references: [id], onDelete: SetNull)
+
+  @@map("search_suggestions")
+  @@index([search_count(sort: Desc)])
+  @@index([is_trending, search_count(sort: Desc)])
+}
+
+// ================================
+// USER SEARCH PREFERENCES MODEL (FIXED)
+// ================================
+
+model UserSearchPreference {
+  id                     String   @id @default(cuid())    // ← FIXED: Changed from uuid() @db.Uuid to cuid()
+  user_id                String   @unique                  // ← FIXED: Removed @db.Uuid
+  preferred_categories   String[] @default([])
+  preferred_price_range  Json     @default("{\"min\": 0, \"max\": 1000000}")
+  preferred_conditions   String[] @default([])
+  preferred_locations    String[] @default([])
+  search_radius_km       Int      @default(50)
+  enable_ai_suggestions  Boolean  @default(true)
+  enable_image_search    Boolean  @default(true)
+  language_preference    String   @default("en")
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("user_search_preferences")
 }
 
 // ================================

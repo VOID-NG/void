@@ -10,6 +10,52 @@ async function main() {
   console.log('🌱 Starting database seeding...');
 
   try {
+
+
+    // ================================
+    // SEED SEARCH SUGGESTIONS
+    // ================================
+    
+    console.log('📝 Seeding search suggestions...');
+    
+    const searchSuggestions = [
+      { suggestion_text: 'iphone', search_count: 100, is_trending: true },
+      { suggestion_text: 'laptop', search_count: 85, is_trending: true },
+      { suggestion_text: 'gaming chair', search_count: 65, is_trending: false },
+      { suggestion_text: 'bluetooth headphones', search_count: 75, is_trending: true },
+      { suggestion_text: 'tablet', search_count: 60, is_trending: false },
+      { suggestion_text: 'smartwatch', search_count: 70, is_trending: true },
+      { suggestion_text: 'camera', search_count: 55, is_trending: false },
+      { suggestion_text: 'keyboard', search_count: 45, is_trending: false },
+      { suggestion_text: 'monitor', search_count: 50, is_trending: false },
+      { suggestion_text: 'phone case', search_count: 40, is_trending: false },
+      { suggestion_text: 'gaming laptop', search_count: 80, is_trending: true },
+      { suggestion_text: 'wireless mouse', search_count: 35, is_trending: false },
+      { suggestion_text: 'smartphone', search_count: 90, is_trending: true },
+      { suggestion_text: 'macbook', search_count: 70, is_trending: true },
+      { suggestion_text: 'gaming pc', search_count: 65, is_trending: false },
+      { suggestion_text: 'airpods', search_count: 85, is_trending: true },
+      { suggestion_text: 'nintendo switch', search_count: 55, is_trending: false },
+      { suggestion_text: 'ps5', search_count: 75, is_trending: true },
+      { suggestion_text: 'xbox', search_count: 60, is_trending: false },
+      { suggestion_text: 'drone', search_count: 45, is_trending: false }
+    ];
+
+    // Use upsert to avoid duplicates
+    for (const suggestion of searchSuggestions) {
+      await prisma.searchSuggestion.upsert({
+        where: {
+          suggestion_text: suggestion.suggestion_text
+        },
+        update: {
+          search_count: suggestion.search_count,
+          is_trending: suggestion.is_trending
+        },
+        create: suggestion
+      });
+    }
+
+    console.log(`✅ Created/updated ${searchSuggestions.length} search suggestions`);
     // ================================
     // CATEGORIES (UPDATED TO MATCH YOUR IMAGE)
     // ================================
