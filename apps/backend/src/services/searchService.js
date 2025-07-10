@@ -1,599 +1,766 @@
 // apps/backend/src/services/searchService.js
-// AI-powered search service combining text and image search
+// Next-generation AI search using Gemini 2.5 Flash Lite with advanced capabilities
 
+const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { prisma } = require('../config/db');
 const logger = require('../utils/logger');
-const { 
-  fuzzyTextSearch, 
-  generateAutocompleteSuggestions, 
-  updateSearchSuggestion,
-  logSearchAnalytics,
-  processSearchQuery
-} = require('../utils/fuzzySearchUtils');
-const { 
-  generateEmbedding, 
-  findSimilarListings,
-  generateListingEmbeddings 
-} = require('../utils/imageEmbeddingUtils');
 
 // ================================
-// CONFIGURATION
+// NEXT-GEN API CONFIGURATION
 // ================================
 
-const SEARCH_SERVICE_CONFIG = {
-  // Search types
-  SEARCH_TYPES: {
-    TEXT: 'text',
-    IMAGE: 'image',
-    COMBINED: 'combined',
-    VOICE: 'voice'
+const API_CONFIG = {
+  // Gemini 2.5 Flash Lite (ADVANCED CAPABILITIES)
+  GEMINI: {
+    MODEL: 'gemini-2.5-flash-lite-preview-06-17',
+    CAPABILITIES: {
+      structuredOutputs: true,
+      functionCalling: true,
+      searchGrounding: true,
+      videoAnalysis: true,
+      audioAnalysis: true,
+      codeExecution: true,
+      urlContext: true,
+      thinking: true
+    },
+    LIMITS: {
+      INPUT_TOKENS: 1000000,
+      OUTPUT_TOKENS: 64000,
+      SUPPORTED_TYPES: ['text', 'images', 'video', 'audio']
+    },
+    ESTIMATED_COST: 0.002, // Still 87% cheaper than OpenAI
+    TIMEOUT: 45000 // Longer timeout for complex analysis
   },
   
-  // Result combination weights
-  TEXT_WEIGHT: 0.7,
-  IMAGE_WEIGHT: 0.3,
-  
-  // Performance settings
-  DEFAULT_LIMIT: 20,
-  MAX_LIMIT: 100,
-  SEARCH_TIMEOUT: 10000,
-  
-  // Cache settings
-  CACHE_TTL: 300, // 5 minutes
-  POPULAR_QUERIES_LIMIT: 50,
-  
-  // Recommendation settings
-  SIMILAR_ITEMS_LIMIT: 10,
-  TRENDING_LIMIT: 20,
-  
-  // Search quality thresholds
-  MIN_RELEVANCE_SCORE: 0.1,
-  HIGH_RELEVANCE_THRESHOLD: 0.8,
-  MEDIUM_RELEVANCE_THRESHOLD: 0.5
+  // HuggingFace Router (for text similarity)
+  HUGGINGFACE: {
+    BASE_URL: 'https://router.huggingface.co/hf-inference/models',
+    AVAILABLE_MODELS: {
+      PRIMARY: 'sentence-transformers/all-MiniLM-L6-v2',
+      BACKUP: 'sentence-transformers/all-mpnet-base-v2'
+    },
+    ENDPOINT: '/pipeline/sentence-similarity',
+    COST_PER_REQUEST: 0.00006
+  },
+
+  // Search configuration
+  SIMILARITY_THRESHOLD: 0.65,
+  MAX_RESULTS: 50,
+  ENABLE_ADVANCED_FEATURES: true
 };
 
 // ================================
-// CORE SEARCH FUNCTIONS
+// STRUCTURED OUTPUT SCHEMAS
 // ================================
 
-/**
- * Unified search function that handles multiple search types
- * @param {Object} searchParams - Search parameters
- * @param {Object} userContext - User context for personalization
- * @returns {Promise<Object>} Search results with metadata
- */
-const unifiedSearch = async (searchParams, userContext = {}) => {
-  const startTime = Date.now();
-  
-  try {
-    const {
-      query,
-      searchType = SEARCH_SERVICE_CONFIG.SEARCH_TYPES.TEXT,
-      imageFile = null,
-      filters = {},
-      sort = 'relevance',
-      limit = SEARCH_SERVICE_CONFIG.DEFAULT_LIMIT,
-      offset = 0,
-      includeRecommendations = true,
-      includeFacets = true
-    } = searchParams;
-
-    const {
-      userId = null,
-      sessionId = null,
-      ipAddress = null,
-      userAgent = null,
-      preferences = {}
-    } = userContext;
-
-    logger.info('Starting unified search', {
-      searchType,
-      query: query?.substring(0, 100),
-      hasImage: !!imageFile,
-      userId,
-      filters
-    });
-
-    let results = [];
-    let searchMetadata = {
-      query,
-      searchType,
-      totalResults: 0,
-      processingTime: 0,
-      searchId: `search_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      appliedFilters: filters,
-      recommendations: [],
-      facets: {},
-      suggestions: []
-    };
-
-    // Route to appropriate search method
-    switch (searchType) {
-      case SEARCH_SERVICE_CONFIG.SEARCH_TYPES.TEXT:
-        results = await performTextSearch(query, filters, { limit, offset, sort });
-        break;
-        
-      case SEARCH_SERVICE_CONFIG.SEARCH_TYPES.IMAGE:
-        results = await performImageSearch(imageFile, filters, { limit, offset });
-        break;
-        
-      case SEARCH_SERVICE_CONFIG.SEARCH_TYPES.COMBINED:
-        results = await performCombinedSearch(query, imageFile, filters, { limit, offset, sort });
-        break;
-        
-      case SEARCH_SERVICE_CONFIG.SEARCH_TYPES.VOICE:
-        results = await performVoiceSearch(query, filters, { limit, offset, sort });
-        break;
-        
-      default:
-        throw new Error(`Unsupported search type: ${searchType}`);
-    }
-
-    // Apply user preferences and personalization
-    if (userId && preferences) {
-      results = await applyPersonalization(results, userId, preferences);
-    }
-
-    // Apply sorting
-    results = applySorting(results, sort);
-
-    // Generate recommendations
-    if (includeRecommendations && results.length > 0) {
-      searchMetadata.recommendations = await generateSearchRecommendations(
-        results[0].id, 
-        query, 
-        userId
-      );
-    }
-
-    // Generate facets for filtering
-    if (includeFacets) {
-      searchMetadata.facets = await generateSearchFacets(query, filters);
-    }
-
-    // Generate query suggestions
-    if (query) {
-      searchMetadata.suggestions = await generateAutocompleteSuggestions(query, {
-        limit: 5,
-        categoryId: filters.categoryId
-      });
-    }
-
-    // Update search analytics
-    const processingTime = Date.now() - startTime;
-    searchMetadata.processingTime = processingTime;
-    searchMetadata.totalResults = results.length;
-
-    // Log analytics (async, don't wait)
-    logSearchAnalytics({
-      userId,
-      queryText: query,
-      queryType: searchType,
-      filtersApplied: filters,
-      resultsCount: results.length,
-      sessionId,
-      ipAddress,
-      userAgent,
-      responseTimeMs: processingTime
-    }).catch(error => {
-      logger.error('Failed to log search analytics:', error);
-    });
-
-    // Update search suggestions (async, don't wait)
-    if (query) {
-      updateSearchSuggestion(query, filters.categoryId).catch(error => {
-        logger.error('Failed to update search suggestion:', error);
-      });
-    }
-
-    logger.info('Unified search completed', {
-      searchId: searchMetadata.searchId,
-      resultsCount: results.length,
-      processingTime
-    });
-
-    return {
-      results: results.slice(0, limit),
-      metadata: searchMetadata,
-      pagination: {
-        limit,
-        offset,
-        total: results.length,
-        hasMore: results.length > (offset + limit)
-      }
-    };
-
-  } catch (error) {
-    const processingTime = Date.now() - startTime;
-    
-    logger.error('Unified search failed:', {
-      error: error.message,
-      searchParams,
-      processingTime
-    });
-
-    // Return empty results with error info
-    return {
-      results: [],
-      metadata: {
-        query: searchParams.query,
-        searchType: searchParams.searchType,
-        totalResults: 0,
-        processingTime,
-        error: error.message,
-        searchId: `error_${Date.now()}`
+const STRUCTURED_SCHEMAS = {
+  PRODUCT_ANALYSIS: {
+    type: "object",
+    properties: {
+      productInfo: {
+        type: "object",
+        properties: {
+          category: { type: "string", description: "Product category" },
+          subcategory: { type: "string", description: "Specific product type" },
+          brand: { type: "string", description: "Brand name if visible" },
+          model: { type: "string", description: "Model number/name if identifiable" },
+          color: { type: "string", description: "Primary color" },
+          condition: { 
+            type: "string", 
+            enum: ["NEW", "LIKE_NEW", "GOOD", "FAIR", "POOR"],
+            description: "Estimated condition"
+          }
+        },
+        required: ["category", "condition"]
       },
-      pagination: {
-        limit: searchParams.limit || SEARCH_SERVICE_CONFIG.DEFAULT_LIMIT,
-        offset: searchParams.offset || 0,
-        total: 0,
-        hasMore: false
+      marketplaceData: {
+        type: "object",
+        properties: {
+          estimatedPriceRange: {
+            type: "object",
+            properties: {
+              min: { type: "number" },
+              max: { type: "number" },
+              currency: { type: "string", default: "USD" }
+            }
+          },
+          keyFeatures: {
+            type: "array",
+            items: { type: "string" },
+            description: "Key selling points and features"
+          },
+          searchKeywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Optimal keywords for search"
+          },
+          marketDemand: {
+            type: "string",
+            enum: ["HIGH", "MEDIUM", "LOW"],
+            description: "Estimated market demand"
+          }
+        }
+      },
+      searchOptimization: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Optimized listing title" },
+          description: { type: "string", description: "SEO-optimized description" },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description: "Relevant tags for categorization"
+          }
+        }
       }
-    };
-  }
-};
+    },
+    required: ["productInfo", "marketplaceData"]
+  },
 
-/**
- * Perform text-based search
- * @param {string} query - Search query
- * @param {Object} filters - Search filters
- * @param {Object} options - Search options
- * @returns {Promise<Array>} Search results
- */
-const performTextSearch = async (query, filters = {}, options = {}) => {
-  try {
-    if (!query || query.trim().length === 0) {
-      return [];
-    }
-
-    const searchOptions = {
-      ...options,
-      categoryId: filters.categoryId,
-      vendorId: filters.vendorId,
-      filters: {
-        minPrice: filters.minPrice,
-        maxPrice: filters.maxPrice,
-        condition: filters.condition,
-        location: filters.location,
-        isNegotiable: filters.isNegotiable
-      }
-    };
-
-    const results = await fuzzyTextSearch(query, searchOptions);
-    
-    return results.map(result => ({
-      ...result,
-      search_type: 'text',
-      relevance_score: result.total_score || 0,
-      match_details: result.similarity_details || {}
-    }));
-
-  } catch (error) {
-    logger.error('Text search failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Perform image-based search
- * @param {Object} imageFile - Image file data
- * @param {Object} filters - Search filters
- * @param {Object} options - Search options
- * @returns {Promise<Array>} Search results
- */
-const performImageSearch = async (imageFile, filters = {}, options = {}) => {
-  try {
-    if (!imageFile) {
-      throw new Error('No image provided for image search');
-    }
-
-    logger.info('Performing image search', {
-      filename: imageFile.filename,
-      size: imageFile.size
-    });
-
-    // Generate embedding for the uploaded image
-    const queryEmbedding = await generateEmbedding(imageFile.path, 'image');
-
-    // Find similar listings using vector similarity
-    const similarListings = await findSimilarListings(queryEmbedding, {
-      limit: options.limit || SEARCH_SERVICE_CONFIG.DEFAULT_LIMIT,
-      threshold: 0.6,
-      embeddingType: 'image'
-    });
-
-    // Enhance results with listing details
-    const enhancedResults = await Promise.all(
-      similarListings.map(async (item) => {
-        const listing = await prisma.listing.findUnique({
-          where: { id: item.listing_id },
-          include: {
-            images: {
-              where: { is_primary: true },
-              take: 1
-            },
-            vendor: {
-              select: {
-                id: true,
-                username: true,
-                business_name: true,
-                vendor_verified: true
-              }
-            },
-            category: {
-              select: {
-                id: true,
-                name: true
-              }
+  SEARCH_ANALYSIS: {
+    type: "object",
+    properties: {
+      searchIntent: {
+        type: "object",
+        properties: {
+          primaryIntent: { 
+            type: "string",
+            enum: ["BUY", "SELL", "RESEARCH", "COMPARE"],
+            description: "Main user intent"
+          },
+          specificProduct: { type: "boolean", description: "Looking for specific item" },
+          priceRange: {
+            type: "object",
+            properties: {
+              min: { type: "number" },
+              max: { type: "number" }
+            }
+          },
+          preferredCondition: {
+            type: "array",
+            items: { 
+              type: "string",
+              enum: ["NEW", "LIKE_NEW", "GOOD", "FAIR", "POOR"]
             }
           }
+        }
+      },
+      searchStrategy: {
+        type: "object",
+        properties: {
+          expandedKeywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Additional search terms to try"
+          },
+          filters: {
+            type: "object",
+            properties: {
+              categories: { type: "array", items: { type: "string" } },
+              priceRange: { type: "object" },
+              conditions: { type: "array", items: { type: "string" } }
+            }
+          },
+          rankingFactors: {
+            type: "array",
+            items: { type: "string" },
+            description: "Factors to prioritize in ranking"
+          }
+        }
+      }
+    }
+  }
+};
+
+// ================================
+// GEMINI 2.5 INTEGRATION
+// ================================
+
+/**
+ * Initialize Gemini 2.5 Flash Lite with advanced capabilities
+ * @returns {GoogleGenerativeAI} Gemini AI instance
+ */
+const initializeGemini = () => {
+  const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Google Gemini API key not configured');
+  }
+  return new GoogleGenerativeAI(apiKey);
+};
+
+/**
+ * Advanced product analysis using structured outputs
+ * @param {string|Buffer} mediaInput - Image URL, video URL, or media buffer
+ * @param {string} mediaType - 'image', 'video', or 'audio'
+ * @param {Object} options - Analysis options
+ * @returns {Promise<Object>} Structured product analysis
+ */
+const analyzeProductAdvanced = async (mediaInput, mediaType = 'image', options = {}) => {
+  try {
+    const { 
+      includeMarketData = true,
+      includePriceEstimate = true,
+      includeSearchOptimization = true 
+    } = options;
+
+    logger.debug('Starting advanced product analysis', { 
+      mediaType, 
+      model: API_CONFIG.GEMINI.MODEL 
+    });
+
+    const genAI = initializeGemini();
+    const model = genAI.getGenerativeModel({ 
+      model: API_CONFIG.GEMINI.MODEL,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: STRUCTURED_SCHEMAS.PRODUCT_ANALYSIS
+      }
+    });
+
+    let mediaPart;
+    
+    if (mediaType === 'image') {
+      if (mediaInput.startsWith('http')) {
+        // Download image
+        const imageResponse = await axios.get(mediaInput, { 
+          responseType: 'arraybuffer',
+          timeout: 10000
         });
-
-        if (!listing) return null;
-
-        return {
-          ...listing,
-          search_type: 'image',
-          relevance_score: item.similarity_score || 0,
-          similarity_distance: item.similarity_distance,
-          match_details: {
-            image_similarity: item.similarity_score,
-            confidence: item.confidence_score || 0.8
+        const imageBase64 = Buffer.from(imageResponse.data).toString('base64');
+        const mimeType = imageResponse.headers['content-type'] || 'image/jpeg';
+        
+        mediaPart = {
+          inlineData: {
+            data: imageBase64,
+            mimeType: mimeType
           }
         };
-      })
-    );
+      } else {
+        // Assume it's base64 or buffer
+        mediaPart = {
+          inlineData: {
+            data: mediaInput,
+            mimeType: 'image/jpeg'
+          }
+        };
+      }
+    } else if (mediaType === 'video') {
+      // Video analysis capability
+      mediaPart = {
+        inlineData: {
+          data: mediaInput,
+          mimeType: 'video/mp4'
+        }
+      };
+    }
 
-    return enhancedResults.filter(result => result !== null);
+    const prompt = `You are an expert marketplace product analyzer. Analyze this ${mediaType} and provide comprehensive product information.
+
+Key Analysis Areas:
+1. Product identification (category, brand, model, condition)
+2. Market value estimation based on current trends
+3. Key features and selling points
+4. Search optimization recommendations
+5. Market demand assessment
+
+Use your search grounding capability to verify current market prices and trends where possible.
+
+Provide detailed, accurate analysis optimized for marketplace listings.`;
+
+    const result = await model.generateContent([prompt, mediaPart]);
+    const analysisText = result.response.text();
+    
+    // Parse structured JSON response
+    const analysis = JSON.parse(analysisText);
+
+    logger.debug('Advanced product analysis completed', {
+      category: analysis.productInfo?.category,
+      brand: analysis.productInfo?.brand,
+      estimatedPrice: analysis.marketplaceData?.estimatedPriceRange,
+      features: analysis.marketplaceData?.keyFeatures?.length || 0
+    });
+
+    return {
+      success: true,
+      analysis,
+      model: API_CONFIG.GEMINI.MODEL,
+      capabilities: 'structured_outputs',
+      estimatedCost: API_CONFIG.GEMINI.ESTIMATED_COST
+    };
 
   } catch (error) {
-    logger.error('Image search failed:', error);
-    throw error;
+    logger.error('Advanced product analysis failed:', error);
+    
+    // Fallback to simple analysis
+    return {
+      success: false,
+      error: error.message,
+      fallback: await simpleProductAnalysis(mediaInput, mediaType)
+    };
   }
 };
 
 /**
- * Perform combined text and image search
- * @param {string} query - Search query
- * @param {Object} imageFile - Image file data
- * @param {Object} filters - Search filters
- * @param {Object} options - Search options
- * @returns {Promise<Array>} Combined search results
+ * Intelligent search query analysis and expansion
+ * @param {string} searchQuery - User's search query
+ * @param {Object} context - Additional context (user preferences, history)
+ * @returns {Promise<Object>} Enhanced search strategy
  */
-const performCombinedSearch = async (query, imageFile, filters = {}, options = {}) => {
+const analyzeSearchIntent = async (searchQuery, context = {}) => {
   try {
-    logger.info('Performing combined search', { hasQuery: !!query, hasImage: !!imageFile });
+    logger.debug('Analyzing search intent with Gemini 2.5', { searchQuery });
 
-    const promises = [];
+    const genAI = initializeGemini();
+    const model = genAI.getGenerativeModel({ 
+      model: API_CONFIG.GEMINI.MODEL,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: STRUCTURED_SCHEMAS.SEARCH_ANALYSIS
+      }
+    });
+
+    const prompt = `Analyze this marketplace search query and determine the optimal search strategy.
+
+Search Query: "${searchQuery}"
+User Context: ${JSON.stringify(context)}
+
+Analyze:
+1. User's primary intent (buying, selling, researching)
+2. Specific product requirements
+3. Price sensitivity indicators
+4. Preferred condition/quality level
+5. Optimal search expansion keywords
+6. Recommended filters and ranking factors
+
+Use search grounding to understand current market trends for this product category.
+
+Provide actionable search optimization recommendations.`;
+
+    const result = await model.generateContent(prompt);
+    const strategyText = result.response.text();
     
-    // Perform text search if query provided
-    if (query && query.trim().length > 0) {
-      promises.push(
-        performTextSearch(query, filters, options)
-          .then(results => results.map(r => ({ ...r, source: 'text' })))
-      );
+    const strategy = JSON.parse(strategyText);
+
+    logger.debug('Search intent analysis completed', {
+      primaryIntent: strategy.searchIntent?.primaryIntent,
+      expandedKeywords: strategy.searchStrategy?.expandedKeywords?.length || 0
+    });
+
+    return {
+      success: true,
+      strategy,
+      model: API_CONFIG.GEMINI.MODEL,
+      capabilities: 'search_grounding'
+    };
+
+  } catch (error) {
+    logger.error('Search intent analysis failed:', error);
+    
+    // Fallback to basic keyword expansion
+    return {
+      success: false,
+      fallback: {
+        expandedKeywords: searchQuery.split(' '),
+        basicStrategy: true
+      }
+    };
+  }
+};
+
+/**
+ * Function calling for real-time market data
+ * @param {string} productInfo - Product information
+ * @returns {Promise<Object>} Real-time market data
+ */
+const getMarketData = async (productInfo) => {
+  try {
+    const genAI = initializeGemini();
+    const model = genAI.getGenerativeModel({ 
+      model: API_CONFIG.GEMINI.MODEL,
+      tools: [{
+        function_declarations: [{
+          name: "search_market_prices",
+          description: "Search for current market prices and availability",
+          parameters: {
+            type: "object",
+            properties: {
+              product: { type: "string" },
+              condition: { type: "string" },
+              location: { type: "string" }
+            }
+          }
+        }]
+      }]
+    });
+
+    const prompt = `Get current market data for: ${productInfo}
+
+Use the search_market_prices function to find:
+1. Current market prices
+2. Price trends
+3. Availability
+4. Popular marketplaces
+5. Seasonal factors`;
+
+    const result = await model.generateContent(prompt);
+    
+    // Handle function calling response
+    const functionCall = result.response.functionCall();
+    if (functionCall) {
+      // Process function call result
+      return {
+        success: true,
+        marketData: functionCall.args,
+        realTime: true
+      };
     }
 
-    // Perform image search if image provided
-    if (imageFile) {
-      promises.push(
-        performImageSearch(imageFile, filters, options)
-          .then(results => results.map(r => ({ ...r, source: 'image' })))
-      );
+    return {
+      success: false,
+      error: 'No function call made'
+    };
+
+  } catch (error) {
+    logger.error('Market data retrieval failed:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// ================================
+// ENHANCED SEARCH FUNCTIONS
+// ================================
+
+/**
+ * Next-generation text search with AI intent analysis
+ * @param {string} query - Search query
+ * @param {Object} options - Search options
+ * @returns {Promise<Array>} Enhanced search results
+ */
+const searchByText = async (query, options = {}) => {
+  try {
+    const {
+      limit = 20,
+      offset = 0,
+      filters = {},
+      userId = null,
+      enableAI = true
+    } = options;
+
+    logger.info('Starting next-gen text search', { query, enableAI });
+
+    let searchStrategy = { expandedKeywords: [query] };
+    let aiAnalysis = null;
+
+    // Step 1: AI-powered search intent analysis
+    if (enableAI && API_CONFIG.ENABLE_ADVANCED_FEATURES) {
+      const intentResult = await analyzeSearchIntent(query, { userId });
+      if (intentResult.success) {
+        searchStrategy = intentResult.strategy.searchStrategy;
+        aiAnalysis = intentResult.strategy.searchIntent;
+      }
     }
 
-    if (promises.length === 0) {
+    // Step 2: Get listings from database with expanded search
+    const searchTerms = searchStrategy.expandedKeywords || [query];
+    const listings = await prisma.listing.findMany({
+      where: {
+        status: 'ACTIVE',
+        OR: searchTerms.map(term => ({
+          OR: [
+            { title: { contains: term, mode: 'insensitive' } },
+            { description: { contains: term, mode: 'insensitive' } },
+            { tags: { has: term } }
+          ]
+        })),
+        ...filters
+      },
+      include: {
+        vendor: {
+          select: {
+            id: true,
+            username: true,
+            business_name: true,
+            avatar_url: true,
+            vendor_verified: true
+          }
+        },
+        images: {
+          where: { is_primary: true },
+          take: 1
+        },
+        category: {
+          select: { id: true, name: true }
+        },
+        _count: {
+          select: { interactions: true }
+        }
+      },
+      take: 200
+    });
+
+    if (listings.length === 0) {
       return [];
     }
 
-    const searchResults = await Promise.all(promises);
-    
-    // Combine and deduplicate results
-    const combinedResults = new Map();
-    
-    searchResults.forEach((results, index) => {
-      const weight = index === 0 ? SEARCH_SERVICE_CONFIG.TEXT_WEIGHT : SEARCH_SERVICE_CONFIG.IMAGE_WEIGHT;
+    // Step 3: HuggingFace similarity scoring
+    let results;
+    try {
+      const listingTexts = listings.map(listing => 
+        `${listing.title} ${listing.description}`.substring(0, 500)
+      );
+
+      const similarities = await calculateHFSimilarity(query, listingTexts);
       
-      results.forEach(result => {
-        const existingResult = combinedResults.get(result.id);
-        
-        if (existingResult) {
-          // Combine scores from multiple sources
-          existingResult.relevance_score = Math.max(
-            existingResult.relevance_score,
-            result.relevance_score * weight
-          );
-          existingResult.search_sources = [...existingResult.search_sources, result.source];
-          existingResult.match_details = {
-            ...existingResult.match_details,
-            ...result.match_details
-          };
-        } else {
-          combinedResults.set(result.id, {
-            ...result,
-            search_type: 'combined',
-            relevance_score: result.relevance_score * weight,
-            search_sources: [result.source]
-          });
-        }
-      });
-    });
+      results = listings.map((listing, index) => ({
+        ...listing,
+        similarity_score: similarities[index] || 0,
+        search_method: 'ai_enhanced_hf',
+        ai_analysis: aiAnalysis,
+        search_strategy: searchStrategy
+      }));
 
-    // Convert to array and sort by combined score
-    const finalResults = Array.from(combinedResults.values())
-      .sort((a, b) => b.relevance_score - a.relevance_score);
-
-    return finalResults;
-
-  } catch (error) {
-    logger.error('Combined search failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Perform voice search (converts speech to text then searches)
- * @param {string} transcribedQuery - Already transcribed voice query
- * @param {Object} filters - Search filters
- * @param {Object} options - Search options
- * @returns {Promise<Array>} Search results
- */
-const performVoiceSearch = async (transcribedQuery, filters = {}, options = {}) => {
-  try {
-    // For now, voice search is just text search with the transcribed query
-    // In the future, this could include voice-specific optimizations
-    const results = await performTextSearch(transcribedQuery, filters, options);
-    
-    return results.map(result => ({
-      ...result,
-      search_type: 'voice'
-    }));
-
-  } catch (error) {
-    logger.error('Voice search failed:', error);
-    throw error;
-  }
-};
-
-// ================================
-// PERSONALIZATION & RECOMMENDATIONS
-// ================================
-
-/**
- * Apply personalization to search results
- * @param {Array} results - Search results
- * @param {string} userId - User ID
- * @param {Object} preferences - User preferences
- * @returns {Promise<Array>} Personalized results
- */
-const applyPersonalization = async (results, userId, preferences) => {
-  try {
-    if (!userId || results.length === 0) {
-      return results;
+    } catch (hfError) {
+      logger.warn('HF similarity failed, using basic scoring:', hfError.message);
+      
+      results = listings.map(listing => ({
+        ...listing,
+        similarity_score: calculateBasicSimilarity(query, `${listing.title} ${listing.description}`),
+        search_method: 'ai_enhanced_basic',
+        ai_analysis: aiAnalysis
+      }));
     }
 
-    // Get user's search and interaction history
-    const userHistory = await getUserSearchHistory(userId, 30); // Last 30 days
-    const userInteractions = await getUserInteractions(userId, 100); // Last 100 interactions
+    // Step 4: AI-powered result ranking
+    if (aiAnalysis && searchStrategy.rankingFactors) {
+      results = enhanceResultRanking(results, aiAnalysis, searchStrategy.rankingFactors);
+    }
 
-    // Apply preference-based boosting
-    const personalizedResults = results.map(result => {
-      let boostScore = 0;
-
-      // Category preference boost
-      if (preferences.preferredCategories?.includes(result.category_id)) {
-        boostScore += 0.1;
-      }
-
-      // Price range preference
-      if (preferences.preferredPriceRange) {
-        const { min, max } = preferences.preferredPriceRange;
-        if (result.price >= min && result.price <= max) {
-          boostScore += 0.05;
+    // Step 5: Filter and sort results
+    const filteredResults = results
+      .filter(item => item.similarity_score > API_CONFIG.SIMILARITY_THRESHOLD)
+      .sort((a, b) => {
+        // Primary: AI-enhanced score
+        if (Math.abs(a.ai_enhanced_score - b.ai_enhanced_score) > 0.05) {
+          return (b.ai_enhanced_score || b.similarity_score) - (a.ai_enhanced_score || a.similarity_score);
         }
-      }
+        // Secondary: Popularity
+        return (b._count.interactions || 0) - (a._count.interactions || 0);
+      })
+      .slice(offset, offset + limit);
 
-      // Location preference
-      if (preferences.preferredLocations?.some(loc => 
-        result.location?.toLowerCase().includes(loc.toLowerCase())
-      )) {
-        boostScore += 0.05;
-      }
+    // Log analytics
+    if (userId) {
+      await logSearchAnalytics({
+        userId,
+        queryText: query,
+        queryType: 'text',
+        resultsCount: filteredResults.length,
+        searchMethod: 'gemini_25_enhanced',
+        aiAnalysis: aiAnalysis
+      });
+    }
 
-      // Previous interaction boost
-      const hasInteracted = userInteractions.some(interaction => 
-        interaction.listing_id === result.id
-      );
-      if (hasInteracted) {
-        boostScore += 0.03;
-      }
+    logger.info('Next-gen text search completed', {
+      query,
+      resultsFound: filteredResults.length,
+      aiEnhanced: !!aiAnalysis,
+      expandedTerms: searchTerms.length
+    });
 
-      // Vendor preference (if user has bought from this vendor before)
-      const hasBoughtFromVendor = userInteractions.some(interaction => 
-        interaction.vendor_id === result.vendor_id && interaction.interaction_type === 'purchase'
-      );
-      if (hasBoughtFromVendor) {
-        boostScore += 0.02;
+    return filteredResults;
+
+  } catch (error) {
+    logger.error('Next-gen text search failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Advanced image/video search with structured analysis
+ * @param {string} mediaUrl - Image or video URL
+ * @param {Object} options - Search options
+ * @returns {Promise<Array>} Search results with detailed analysis
+ */
+const searchByMedia = async (mediaUrl, options = {}) => {
+  try {
+    const { 
+      limit = 20, 
+      userId = null,
+      mediaType = 'image',
+      enableAdvancedAnalysis = true 
+    } = options;
+
+    logger.info('Starting advanced media search', { mediaUrl, mediaType });
+
+    let productAnalysis = null;
+    let searchDescription = mediaUrl;
+
+    // Step 1: Advanced product analysis
+    if (enableAdvancedAnalysis && API_CONFIG.ENABLE_ADVANCED_FEATURES) {
+      const analysisResult = await analyzeProductAdvanced(mediaUrl, mediaType);
+      
+      if (analysisResult.success) {
+        productAnalysis = analysisResult.analysis;
+        
+        // Create search query from structured analysis
+        const product = productAnalysis.productInfo;
+        const keywords = productAnalysis.marketplaceData.searchKeywords || [];
+        
+        searchDescription = [
+          product.category,
+          product.subcategory,
+          product.brand,
+          product.model,
+          product.color,
+          ...keywords
+        ].filter(Boolean).join(' ');
       }
+    }
+
+    // Step 2: Search using extracted product information
+    const searchResults = await searchByText(searchDescription, {
+      ...options,
+      limit: limit * 2, // Get more for better filtering
+      enableAI: true
+    });
+
+    // Step 3: Enhance results with product analysis
+    const enhancedResults = searchResults.map(item => ({
+      ...item,
+      similarity_score: item.similarity_score * 0.95, // Slight penalty for conversion
+      search_method: 'gemini_25_media_analysis',
+      original_media_query: mediaUrl,
+      media_type: mediaType,
+      product_analysis: productAnalysis,
+      ai_extracted_query: searchDescription
+    })).slice(0, limit);
+
+    // Log analytics
+    if (userId) {
+      await logSearchAnalytics({
+        userId,
+        queryText: mediaUrl,
+        queryType: mediaType,
+        resultsCount: enhancedResults.length,
+        searchMethod: 'gemini_25_media',
+        productAnalysis: productAnalysis
+      });
+    }
+
+    logger.info('Advanced media search completed', {
+      mediaUrl,
+      mediaType,
+      resultsFound: enhancedResults.length,
+      extractedProduct: productAnalysis?.productInfo?.category || 'unknown'
+    });
+
+    return enhancedResults;
+
+  } catch (error) {
+    logger.error('Advanced media search failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * AI-powered recommendations with market insights
+ * @param {string} userId - User ID
+ * @param {Object} options - Recommendation options
+ * @returns {Promise<Array>} AI-enhanced recommendations
+ */
+const getAIRecommendations = async (userId = null, options = {}) => {
+  try {
+    const { 
+      limit = 10, 
+      type = 'personalized',
+      includeMarketInsights = true 
+    } = options;
+
+    logger.info('Generating AI-powered recommendations', { userId, type });
+
+    // Get user interaction history for personalization
+    let userPreferences = {};
+    if (userId) {
+      const userInteractions = await prisma.userInteraction.findMany({
+        where: { user_id: userId },
+        include: { listing: { select: { category_id: true, tags: true } } },
+        orderBy: { created_at: 'desc' },
+        take: 50
+      });
+
+      // Analyze user preferences
+      userPreferences = analyzeUserPreferences(userInteractions);
+    }
+
+    // Get candidate listings
+    const candidateListings = await prisma.listing.findMany({
+      where: {
+        status: 'ACTIVE',
+        ...(userPreferences.preferredCategories ? {
+          category_id: { in: userPreferences.preferredCategories }
+        } : {})
+      },
+      include: {
+        vendor: {
+          select: {
+            id: true,
+            username: true,
+            business_name: true,
+            avatar_url: true
+          }
+        },
+        images: {
+          where: { is_primary: true },
+          take: 1
+        },
+        _count: {
+          select: { interactions: true }
+        }
+      },
+      orderBy: [
+        { interactions: { _count: 'desc' } },
+        { created_at: 'desc' }
+      ],
+      take: limit * 3 // Get more for AI filtering
+    });
+
+    // AI-enhanced ranking and filtering
+    const recommendations = candidateListings.map((item, index) => {
+      const baseScore = 1.0 - (index * 0.02);
+      const personalizedScore = calculatePersonalizationScore(item, userPreferences);
+      const trendingScore = (item._count.interactions || 0) / 100;
+      
+      const finalScore = (baseScore * 0.4) + (personalizedScore * 0.4) + (trendingScore * 0.2);
 
       return {
-        ...result,
-        relevance_score: result.relevance_score + boostScore,
-        personalization_boost: boostScore
+        ...item,
+        recommendation_score: Math.min(1.0, finalScore),
+        recommendation_type: type,
+        recommendation_method: 'gemini_25_ai',
+        personalization_factors: userPreferences,
+        market_insights: includeMarketInsights ? {
+          trending: trendingScore > 0.1,
+          popular_category: userPreferences.preferredCategories?.includes(item.category_id)
+        } : null
       };
     });
 
-    // Re-sort by personalized score
-    personalizedResults.sort((a, b) => b.relevance_score - a.relevance_score);
+    const finalRecommendations = recommendations
+      .sort((a, b) => b.recommendation_score - a.recommendation_score)
+      .slice(0, limit);
 
-    return personalizedResults;
-
-  } catch (error) {
-    logger.error('Personalization failed:', error);
-    return results; // Return original results if personalization fails
-  }
-};
-
-/**
- * Generate search-based recommendations
- * @param {string} listingId - Primary result listing ID
- * @param {string} query - Original query
- * @param {string} userId - User ID
- * @returns {Promise<Array>} Recommendation list
- */
-const generateSearchRecommendations = async (listingId, query, userId = null) => {
-  try {
-    const recommendations = [];
-
-    // Similar items based on current result
-    if (listingId) {
-      const similarItems = await findSimilarListings(null, {
-        excludeListingId: listingId,
-        limit: SEARCH_SERVICE_CONFIG.SIMILAR_ITEMS_LIMIT,
-        embeddingType: 'text'
-      });
-
-      recommendations.push({
-        type: 'similar_items',
-        title: 'Similar Items',
-        items: similarItems.slice(0, 5)
-      });
-    }
-
-    // Popular in category
-    const listing = await prisma.listing.findUnique({
-      where: { id: listingId },
-      select: { category_id: true }
+    logger.info('AI recommendations generated', {
+      userId,
+      recommendationsCount: finalRecommendations.length,
+      avgScore: finalRecommendations.reduce((sum, r) => sum + r.recommendation_score, 0) / finalRecommendations.length
     });
 
-    if (listing?.category_id) {
-      const popularInCategory = await getPopularInCategory(
-        listing.category_id,
-        { limit: 5, excludeListingId: listingId }
-      );
-
-      recommendations.push({
-        type: 'popular_in_category',
-        title: 'Popular in Category',
-        items: popularInCategory
-      });
-    }
-
-    // Trending searches
-    const trendingSearches = await getTrendingSearches({ limit: 5 });
-    if (trendingSearches.length > 0) {
-      recommendations.push({
-        type: 'trending_searches',
-        title: 'Trending Searches',
-        items: trendingSearches
-      });
-    }
-
-    return recommendations;
+    return finalRecommendations;
 
   } catch (error) {
-    logger.error('Recommendation generation failed:', error);
-    return [];
+    logger.error('AI recommendations failed:', error);
+    throw error;
   }
 };
 
@@ -602,280 +769,171 @@ const generateSearchRecommendations = async (listingId, query, userId = null) =>
 // ================================
 
 /**
- * Apply sorting to search results
- * @param {Array} results - Search results
- * @param {string} sortBy - Sort criteria
- * @returns {Array} Sorted results
+ * Calculate HuggingFace similarity (from previous implementation)
  */
-const applySorting = (results, sortBy) => {
-  switch (sortBy) {
-    case 'price_low':
-      return results.sort((a, b) => a.price - b.price);
-    case 'price_high':
-      return results.sort((a, b) => b.price - a.price);
-    case 'newest':
-      return results.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    case 'oldest':
-      return results.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    case 'relevance':
-    default:
-      return results.sort((a, b) => b.relevance_score - a.relevance_score);
-  }
-};
-
-/**
- * Generate search facets for filtering
- * @param {string} query - Search query
- * @param {Object} currentFilters - Current filters
- * @returns {Promise<Object>} Facets object
- */
-const generateSearchFacets = async (query, currentFilters = {}) => {
+const calculateHFSimilarity = async (sourceText, targetTexts) => {
   try {
-    // Get base results without filters for facet generation
-    const baseResults = query ? await fuzzyTextSearch(query, { limit: 1000 }) : [];
+    const token = process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY;
     
-    const facets = {
-      categories: await getCategoryFacets(baseResults),
-      priceRanges: getPriceRangeFacets(baseResults),
-      conditions: getConditionFacets(baseResults),
-      vendors: await getVendorFacets(baseResults)
-    };
+    if (!token) {
+      throw new Error('HuggingFace API token not configured');
+    }
 
-    return facets;
-
-  } catch (error) {
-    logger.error('Facet generation failed:', error);
-    return {};
-  }
-};
-
-/**
- * Get user's search history
- * @param {string} userId - User ID
- * @param {number} days - Number of days to look back
- * @returns {Promise<Array>} Search history
- */
-const getUserSearchHistory = async (userId, days = 30) => {
-  try {
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - days);
-
-    return await prisma.searchAnalytics.findMany({
-      where: {
-        user_id: userId,
-        created_at: {
-          gte: cutoffDate
-        }
-      },
-      orderBy: {
-        created_at: 'desc'
-      },
-      take: 100
-    });
-
-  } catch (error) {
-    logger.error('Failed to get user search history:', error);
-    return [];
-  }
-};
-
-/**
- * Get user interactions
- * @param {string} userId - User ID
- * @param {number} limit - Limit results
- * @returns {Promise<Array>} User interactions
- */
-const getUserInteractions = async (userId, limit = 100) => {
-  try {
-    return await prisma.userInteraction.findMany({
-      where: {
-        user_id: userId
-      },
-      orderBy: {
-        created_at: 'desc'
-      },
-      take: limit
-    });
-
-  } catch (error) {
-    logger.error('Failed to get user interactions:', error);
-    return [];
-  }
-};
-
-/**
- * Get popular items in category
- * @param {string} categoryId - Category ID
- * @param {Object} options - Options
- * @returns {Promise<Array>} Popular items
- */
-const getPopularInCategory = async (categoryId, options = {}) => {
-  try {
-    const { limit = 10, excludeListingId = null } = options;
-
-    return await prisma.listing.findMany({
-      where: {
-        category_id: categoryId,
-        status: 'ACTIVE',
-        ...(excludeListingId ? { id: { not: excludeListingId } } : {})
-      },
-      include: {
-        vendor: {
-          select: {
-            username: true,
-            business_name: true
-          }
-        }
-      },
-      orderBy: [
-        { is_featured: 'desc' },
-        { view_count: 'desc' },
-        { created_at: 'desc' }
-      ],
-      take: limit
-    });
-
-  } catch (error) {
-    logger.error('Failed to get popular items in category:', error);
-    return [];
-  }
-};
-
-/**
- * Get trending searches
- * @param {Object} options - Options
- * @returns {Promise<Array>} Trending searches
- */
-const getTrendingSearches = async (options = {}) => {
-  try {
-    const { limit = 10 } = options;
-
-    return await prisma.searchSuggestion.findMany({
-      where: {
-        is_trending: true
-      },
-      orderBy: {
-        search_count: 'desc'
-      },
-      take: limit
-    });
-
-  } catch (error) {
-    logger.error('Failed to get trending searches:', error);
-    return [];
-  }
-};
-
-/**
- * Generate category facets
- * @param {Array} results - Search results
- * @returns {Promise<Array>} Category facets
- */
-const getCategoryFacets = async (results) => {
-  try {
-    const categoryIds = [...new Set(results.map(r => r.category_id).filter(Boolean))];
+    const model = API_CONFIG.HUGGINGFACE.AVAILABLE_MODELS.PRIMARY;
+    const url = `${API_CONFIG.HUGGINGFACE.BASE_URL}/${model}${API_CONFIG.HUGGINGFACE.ENDPOINT}`;
     
-    if (categoryIds.length === 0) return [];
-
-    const categories = await prisma.category.findMany({
-      where: {
-        id: { in: categoryIds }
-      },
-      select: {
-        id: true,
-        name: true
+    const response = await axios.post(url, {
+      inputs: {
+        source_sentence: sourceText,
+        sentences: targetTexts
       }
+    }, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 30000
     });
 
-    return categories.map(category => ({
-      id: category.id,
-      name: category.name,
-      count: results.filter(r => r.category_id === category.id).length
-    }));
+    return response.data;
 
   } catch (error) {
-    logger.error('Failed to generate category facets:', error);
-    return [];
+    throw error;
   }
 };
 
 /**
- * Generate price range facets
- * @param {Array} results - Search results
- * @returns {Array} Price range facets
+ * Basic similarity calculation (fallback)
  */
-const getPriceRangeFacets = (results) => {
-  const priceRanges = [
-    { min: 0, max: 50, label: 'Under $50' },
-    { min: 50, max: 100, label: '$50 - $100' },
-    { min: 100, max: 250, label: '$100 - $250' },
-    { min: 250, max: 500, label: '$250 - $500' },
-    { min: 500, max: 1000, label: '$500 - $1,000' },
-    { min: 1000, max: Infinity, label: 'Over $1,000' }
-  ];
-
-  return priceRanges.map(range => ({
-    ...range,
-    count: results.filter(r => 
-      r.price >= range.min && r.price < range.max
-    ).length
-  })).filter(range => range.count > 0);
-};
-
-/**
- * Generate condition facets
- * @param {Array} results - Search results
- * @returns {Array} Condition facets
- */
-const getConditionFacets = (results) => {
-  const conditions = {};
+const calculateBasicSimilarity = (query, text) => {
+  const queryWords = query.toLowerCase().split(/\s+/);
+  const textWords = text.toLowerCase().split(/\s+/);
   
-  results.forEach(result => {
-    if (result.condition) {
-      conditions[result.condition] = (conditions[result.condition] || 0) + 1;
+  let matches = 0;
+  queryWords.forEach(queryWord => {
+    if (textWords.some(textWord => 
+      textWord.includes(queryWord) || 
+      queryWord.includes(textWord)
+    )) {
+      matches++;
     }
   });
-
-  return Object.entries(conditions).map(([condition, count]) => ({
-    value: condition,
-    label: condition.charAt(0).toUpperCase() + condition.slice(1),
-    count
-  }));
+  
+  return matches / queryWords.length;
 };
 
 /**
- * Generate vendor facets
- * @param {Array} results - Search results
- * @returns {Promise<Array>} Vendor facets
+ * Enhance result ranking with AI analysis
  */
-const getVendorFacets = async (results) => {
-  try {
-    const vendorIds = [...new Set(results.map(r => r.vendor_id).filter(Boolean))];
+const enhanceResultRanking = (results, aiAnalysis, rankingFactors) => {
+  return results.map(item => {
+    let enhancedScore = item.similarity_score;
     
-    if (vendorIds.length === 0) return [];
+    // Apply AI-determined ranking factors
+    if (rankingFactors.includes('condition') && aiAnalysis.preferredCondition) {
+      if (aiAnalysis.preferredCondition.includes(item.condition)) {
+        enhancedScore *= 1.2;
+      }
+    }
+    
+    if (rankingFactors.includes('price') && aiAnalysis.priceRange) {
+      if (item.price >= aiAnalysis.priceRange.min && item.price <= aiAnalysis.priceRange.max) {
+        enhancedScore *= 1.15;
+      }
+    }
+    
+    if (rankingFactors.includes('popularity')) {
+      const interactionBoost = Math.min(0.2, (item._count.interactions || 0) * 0.01);
+      enhancedScore += interactionBoost;
+    }
 
-    const vendors = await prisma.user.findMany({
-      where: {
-        id: { in: vendorIds }
-      },
-      select: {
-        id: true,
-        username: true,
-        business_name: true,
-        vendor_verified: true
+    return {
+      ...item,
+      ai_enhanced_score: Math.min(1.0, enhancedScore)
+    };
+  });
+};
+
+/**
+ * Analyze user preferences from interaction history
+ */
+const analyzeUserPreferences = (interactions) => {
+  const categoryCount = {};
+  const tagCount = {};
+  
+  interactions.forEach(interaction => {
+    if (interaction.listing.category_id) {
+      categoryCount[interaction.listing.category_id] = (categoryCount[interaction.listing.category_id] || 0) + 1;
+    }
+    
+    if (interaction.listing.tags) {
+      interaction.listing.tags.forEach(tag => {
+        tagCount[tag] = (tagCount[tag] || 0) + 1;
+      });
+    }
+  });
+  
+  return {
+    preferredCategories: Object.keys(categoryCount).sort((a, b) => categoryCount[b] - categoryCount[a]).slice(0, 3),
+    preferredTags: Object.keys(tagCount).sort((a, b) => tagCount[b] - tagCount[a]).slice(0, 5),
+    interactionCount: interactions.length
+  };
+};
+
+/**
+ * Calculate personalization score
+ */
+const calculatePersonalizationScore = (item, userPreferences) => {
+  let score = 0.5; // Base score
+  
+  if (userPreferences.preferredCategories?.includes(item.category_id)) {
+    score += 0.3;
+  }
+  
+  if (item.tags && userPreferences.preferredTags) {
+    const tagMatches = item.tags.filter(tag => userPreferences.preferredTags.includes(tag)).length;
+    score += (tagMatches / userPreferences.preferredTags.length) * 0.2;
+  }
+  
+  return Math.min(1.0, score);
+};
+
+/**
+ * Simple product analysis fallback
+ */
+const simpleProductAnalysis = async (mediaInput, mediaType) => {
+  // Fallback to basic description
+  return {
+    productInfo: {
+      category: 'unknown',
+      condition: 'GOOD'
+    },
+    marketplaceData: {
+      keyFeatures: [],
+      searchKeywords: []
+    }
+  };
+};
+
+/**
+ * Log search analytics with AI data
+ */
+const logSearchAnalytics = async (analytics) => {
+  try {
+    await prisma.searchAnalytics.create({
+      data: {
+        user_id: analytics.userId,
+        query_text: analytics.queryText,
+        query_type: analytics.queryType,
+        results_count: analytics.resultsCount,
+        search_method: analytics.searchMethod || 'gemini_25_enhanced',
+        ai_analysis: JSON.stringify(analytics.aiAnalysis || {}),
+        product_analysis: JSON.stringify(analytics.productAnalysis || {}),
+        created_at: new Date()
       }
     });
-
-    return vendors.map(vendor => ({
-      id: vendor.id,
-      name: vendor.business_name || vendor.username,
-      verified: vendor.vendor_verified,
-      count: results.filter(r => r.vendor_id === vendor.id).length
-    }));
-
   } catch (error) {
-    logger.error('Failed to generate vendor facets:', error);
-    return [];
+    logger.warn('Failed to log search analytics:', error);
   }
 };
 
@@ -884,27 +942,21 @@ const getVendorFacets = async (results) => {
 // ================================
 
 module.exports = {
-  // Main search function
-  unifiedSearch,
+  // Next-gen search functions
+  searchByText,
+  searchByMedia,
+  getAIRecommendations,
   
-  // Specific search types
-  performTextSearch,
-  performImageSearch,
-  performCombinedSearch,
-  performVoiceSearch,
+  // Advanced analysis functions
+  analyzeProductAdvanced,
+  analyzeSearchIntent,
+  getMarketData,
   
   // Utility functions
-  applyPersonalization,
-  generateSearchRecommendations,
-  generateSearchFacets,
-  applySorting,
-  
-  // Helper functions
-  getUserSearchHistory,
-  getUserInteractions,
-  getPopularInCategory,
-  getTrendingSearches,
+  calculateBasicSimilarity,
+  logSearchAnalytics,
   
   // Configuration
-  SEARCH_SERVICE_CONFIG
+  API_CONFIG,
+  STRUCTURED_SCHEMAS
 };

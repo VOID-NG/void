@@ -1,715 +1,469 @@
 // apps/backend/src/controllers/searchController.js
-// AI-powered search controller for VOID Marketplace
+// Search controller implementing HuggingFace AI search
 
 const { 
-    unifiedSearch,
-    performTextSearch,
-    performImageSearch,
-    performCombinedSearch,
-    generateSearchRecommendations,
-    SEARCH_SERVICE_CONFIG
-  } = require('../services/searchService');
-  const { 
-    generateAutocompleteSuggestions, 
-    logSearchAnalytics,
-    updateSearchSuggestion
-  } = require('../utils/fuzzySearchUtils');
-  const { 
-    generateListingEmbeddings,
-    batchProcessEmbeddings,
-    EMBEDDING_CONFIG
-  } = require('../utils/imageEmbeddingUtils');
-  const { prisma } = require('../config/db');
-  const logger = require('../utils/logger');
-  const multer = require('multer');
-  const path = require('path');
-  
-  // ================================
-  // FILE UPLOAD CONFIGURATION
-  // ================================
-  
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, 'uploads/search-images/');
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, `search-${uniqueSuffix}${path.extname(file.originalname)}`);
+  searchByText, 
+  searchByImage, 
+  getRecommendations,
+  logSearchAnalytics 
+} = require('../services/searchService');
+const logger = require('../utils/logger');
+const { ValidationError } = require('../utils/errors');
+
+// ================================
+// TEXT SEARCH
+// ================================
+
+/**
+ * @route   GET /api/v1/search
+ * @desc    Text-based search with AI similarity
+ * @access  Public
+ */
+const textSearch = async (req, res) => {
+  try {
+    const { 
+      q: query, 
+      page = 1, 
+      limit = 20,
+      category_id,
+      min_price,
+      max_price,
+      condition,
+      location
+    } = req.query;
+
+    // Validation
+    if (!query || query.trim().length < 2) {
+      throw new ValidationError('Search query must be at least 2 characters long');
     }
-  });
-  
-  const uploadSearchImage = multer({
-    storage: storage,
-    limits: {
-      fileSize: 5 * 1024 * 1024, // 5MB limit
-      files: 1
-    },
-    fileFilter: (req, file, cb) => {
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-      if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Invalid file type. Only JPEG, PNG, and WebP are allowed.'));
-      }
+
+    if (query.length > 100) {
+      throw new ValidationError('Search query too long (max 100 characters)');
     }
-  });
-  
-  // ================================
-  // SEARCH ENDPOINTS
-  // ================================
-  
-  /**
-   * @route   GET /api/v1/search
-   * @desc    Universal search endpoint (text, image, or combined)
-   * @access  Public
-   */
-  const universalSearch = async (req, res) => {
-    try {
-      const startTime = Date.now();
-      
-      const {
-        q: query,
-        type = 'text',
-        sort = 'relevance',
-        limit = 20,
-        offset = 0,
-        category,
-        vendor,
-        min_price,
-        max_price,
-        condition,
-        location,
-        negotiable,
-        featured,
-        include_recommendations = 'true',
-        include_facets = 'true'
-      } = req.query;
-  
-      // Validate search type
-      const validTypes = Object.values(SEARCH_SERVICE_CONFIG.SEARCH_TYPES);
-      if (!validTypes.includes(type)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid search type',
-          message: `Search type must be one of: ${validTypes.join(', ')}`
-        });
-      }
-  
-      // Build filters object
-      const filters = {};
-      if (category) filters.categoryId = category;
-      if (vendor) filters.vendorId = vendor;
-      if (min_price) filters.minPrice = parseFloat(min_price);
-      if (max_price) filters.maxPrice = parseFloat(max_price);
-      if (condition) filters.condition = condition;
-      if (location) filters.location = location;
-      if (negotiable !== undefined) filters.isNegotiable = negotiable === 'true';
-      if (featured !== undefined) filters.isFeatured = featured === 'true';
-  
-      // Build search parameters
-      const searchParams = {
-        query,
-        searchType: type,
-        filters,
-        sort,
-        limit: Math.min(parseInt(limit), 100), // Cap at 100
-        offset: parseInt(offset),
-        includeRecommendations: include_recommendations === 'true',
-        includeFacets: include_facets === 'true'
-      };
-  
-      // Build user context
-      const userContext = {
-        userId: req.user?.id,
-        sessionId: req.sessionId || req.headers['x-session-id'],
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        preferences: req.user?.search_preferences || {}
-      };
-  
-      // Perform search
-      const searchResult = await unifiedSearch(searchParams, userContext);
-  
-      const responseTime = Date.now() - startTime;
-  
-      logger.info('Universal search completed', {
-        query: query?.substring(0, 100),
-        type,
-        resultsCount: searchResult.results.length,
-        responseTime,
-        userId: req.user?.id
-      });
-  
-      res.json({
-        success: true,
-        data: searchResult.results,
-        metadata: {
-          ...searchResult.metadata,
-          response_time_ms: responseTime
-        },
-        pagination: searchResult.pagination
-      });
-  
-    } catch (error) {
-      logger.error('Universal search failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Search failed',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   POST /api/v1/search/image
-   * @desc    Image-based search with file upload
-   * @access  Public
-   */
-  const imageSearch = [
-    uploadSearchImage.single('image'),
-    async (req, res) => {
-      try {
-        if (!req.file) {
-          return res.status(400).json({
-            success: false,
-            error: 'No image provided',
-            message: 'Please upload an image for search'
-          });
-        }
-  
-        const {
-          limit = 20,
-          category,
-          min_price,
-          max_price,
-          condition
-        } = req.body;
-  
-        // Build filters
-        const filters = {};
-        if (category) filters.categoryId = category;
-        if (min_price) filters.minPrice = parseFloat(min_price);
-        if (max_price) filters.maxPrice = parseFloat(max_price);
-        if (condition) filters.condition = condition;
-  
-        // Perform image search
-        const results = await performImageSearch(req.file, filters, {
-          limit: Math.min(parseInt(limit), 50) // Cap at 50 for image search
-        });
-  
-        // Clean up uploaded file
-        const fs = require('fs');
-        if (fs.existsSync(req.file.path)) {
-          fs.unlinkSync(req.file.path);
-        }
-  
-        logger.info('Image search completed', {
-          filename: req.file.filename,
-          resultsCount: results.length,
-          userId: req.user?.id
-        });
-  
-        res.json({
-          success: true,
-          data: results,
-          metadata: {
-            search_type: 'image',
-            image_processed: true,
-            results_count: results.length
-          }
-        });
-  
-      } catch (error) {
-        logger.error('Image search failed:', error);
-        
-        // Clean up uploaded file on error
-        if (req.file && req.file.path) {
-          const fs = require('fs');
-          if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-          }
-        }
-  
-        res.status(500).json({
-          success: false,
-          error: 'Image search failed',
-          message: error.message
-        });
-      }
-    }
-  ];
-  
-  /**
-   * @route   GET /api/v1/search/autocomplete
-   * @desc    Get search suggestions for autocomplete
-   * @access  Public
-   */
-  const autocomplete = async (req, res) => {
-    try {
-      const { q: query, category, limit = 10 } = req.query;
-  
-      if (!query || query.length < 2) {
-        return res.json({
-          success: true,
-          data: []
-        });
-      }
-  
-      const suggestions = await generateAutocompleteSuggestions(query, {
-        limit: Math.min(parseInt(limit), 20),
-        categoryId: category,
-        includePopular: true,
-        includeTrending: true
-      });
-  
-      res.json({
-        success: true,
-        data: suggestions
-      });
-  
-    } catch (error) {
-      logger.error('Autocomplete failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Autocomplete failed',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   GET /api/v1/search/trending
-   * @desc    Get trending search terms
-   * @access  Public
-   */
-  const getTrendingSearches = async (req, res) => {
-    try {
-      const { limit = 10, category } = req.query;
-  
-      const trending = await prisma.searchSuggestion.findMany({
-        where: {
-          is_trending: true,
-          ...(category ? { category_id: category } : {})
-        },
-        orderBy: [
-          { search_count: 'desc' },
-          { updated_at: 'desc' }
-        ],
-        take: Math.min(parseInt(limit), 50),
-        select: {
-          suggestion_text: true,
-          search_count: true,
-          category: {
-            select: {
-              id: true,
-              name: true
-            }
-          }
-        }
-      });
-  
-      res.json({
-        success: true,
-        data: trending.map(item => ({
-          text: item.suggestion_text,
-          count: item.search_count,
-          category: item.category
-        }))
-      });
-  
-    } catch (error) {
-      logger.error('Get trending searches failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch trending searches',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   GET /api/v1/search/popular
-   * @desc    Get popular search terms
-   * @access  Public
-   */
-  const getPopularSearches = async (req, res) => {
-    try {
-      const { limit = 20, days = 7, category } = req.query;
-  
-      // Get popular searches from the last N days
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
-  
-      const popular = await prisma.searchAnalytics.groupBy({
-        by: ['query_text'],
-        where: {
-          query_text: {
-            not: null
-          },
-          created_at: {
-            gte: cutoffDate
-          },
-          results_count: {
-            gt: 0
-          }
-        },
-        _count: {
-          query_text: true
-        },
-        orderBy: {
-          _count: {
-            query_text: 'desc'
-          }
-        },
-        take: Math.min(parseInt(limit), 50)
-      });
-  
-      res.json({
-        success: true,
-        data: popular.map(item => ({
-          text: item.query_text,
-          search_count: item._count.query_text
-        }))
-      });
-  
-    } catch (error) {
-      logger.error('Get popular searches failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch popular searches',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   GET /api/v1/search/recommendations/:listingId
-   * @desc    Get search-based recommendations for a listing
-   * @access  Public
-   */
-  const getSearchRecommendations = async (req, res) => {
-    try {
-      const { listingId } = req.params;
-      const { limit = 10 } = req.query;
-  
-      const recommendations = await generateSearchRecommendations(
-        listingId,
-        null, // No query context
-        req.user?.id
-      );
-  
-      res.json({
-        success: true,
-        data: recommendations
-      });
-  
-    } catch (error) {
-      logger.error('Get search recommendations failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch recommendations',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   POST /api/v1/search/analytics/click
-   * @desc    Track search result clicks for analytics
-   * @access  Public
-   */
-  const trackSearchClick = async (req, res) => {
-    try {
-      const { 
-        search_id, 
-        listing_id, 
-        query, 
-        search_type = 'text',
-        result_position 
-      } = req.body;
-  
-      // Log the click event
-      await logSearchAnalytics({
-        userId: req.user?.id,
-        queryText: query,
-        queryType: search_type,
-        clickedResultId: listing_id,
-        sessionId: req.sessionId || req.headers['x-session-id'],
-        ipAddress: req.ip,
-        userAgent: req.get('User-Agent'),
-        metadata: {
-          search_id,
-          result_position,
-          click_timestamp: new Date().toISOString()
-        }
-      });
-  
-      // Increment click count for the listing (optional)
-      if (listing_id) {
-        await prisma.listing.update({
-          where: { id: listing_id },
-          data: {
-            click_count: {
-              increment: 1
-            }
-          }
-        }).catch(error => {
-          logger.warn('Failed to increment listing click count:', error);
-        });
-      }
-  
-      res.json({
-        success: true,
-        message: 'Click tracked successfully'
-      });
-  
-    } catch (error) {
-      logger.error('Track search click failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to track click',
-        message: error.message
-      });
-    }
-  };
-  
-  // ================================
-  // ADMIN SEARCH MANAGEMENT
-  // ================================
-  
-  /**
-   * @route   GET /api/v1/search/admin/analytics
-   * @desc    Get search analytics for admin dashboard
-   * @access  Private (Admin+)
-   */
-  const getSearchAnalytics = async (req, res) => {
-    try {
-      const { 
-        days = 7,
-        search_type,
-        limit = 100 
-      } = req.query;
-  
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - parseInt(days));
-  
-      // Get search volume over time
-      const searchVolume = await prisma.searchAnalytics.groupBy({
-        by: ['query_type'],
-        where: {
-          created_at: {
-            gte: cutoffDate
-          },
-          ...(search_type ? { query_type: search_type } : {})
-        },
-        _count: {
-          id: true
-        },
-        _avg: {
-          response_time_ms: true,
-          results_count: true
-        }
-      });
-  
-      // Get top queries
-      const topQueries = await prisma.searchAnalytics.groupBy({
-        by: ['query_text'],
-        where: {
-          created_at: {
-            gte: cutoffDate
-          },
-          query_text: {
-            not: null
-          }
-        },
-        _count: {
-          query_text: true
-        },
-        orderBy: {
-          _count: {
-            query_text: 'desc'
-          }
-        },
-        take: 20
-      });
-  
-      // Get search success rate (searches with results vs without)
-      const successRate = await prisma.searchAnalytics.aggregate({
-        where: {
-          created_at: {
-            gte: cutoffDate
-          }
-        },
-        _count: {
-          id: true
-        },
-        _avg: {
-          results_count: true
-        }
-      });
-  
-      const analytics = {
-        search_volume: searchVolume,
-        top_queries: topQueries,
-        success_rate: {
-          total_searches: successRate._count.id,
-          avg_results: successRate._avg.results_count,
-          success_percentage: successRate._avg.results_count > 0 ? 
-            ((successRate._avg.results_count / successRate._count.id) * 100).toFixed(2) : 0
-        },
-        period: {
-          days: parseInt(days),
-          start_date: cutoffDate.toISOString(),
-          end_date: new Date().toISOString()
-        }
-      };
-  
-      res.json({
-        success: true,
-        data: analytics
-      });
-  
-    } catch (error) {
-      logger.error('Get search analytics failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch search analytics',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   POST /api/v1/search/admin/reindex
-   * @desc    Reindex all listings for search (regenerate embeddings)
-   * @access  Private (Admin+)
-   */
-  const reindexListings = async (req, res) => {
-    try {
-      const { batch_size = 10, force = false } = req.body;
-  
-      logger.info('Starting search reindexing', {
-        adminId: req.user.id,
-        batchSize: batch_size,
-        force
-      });
-  
-      // Get all active listings
-      const listings = await prisma.listing.findMany({
-        where: {
-          status: 'ACTIVE'
-        },
-        include: {
-          images: {
-            where: { is_primary: true },
-            take: 1
-          }
-        }
-      });
-  
-      // Process embeddings in batches
-      const result = await batchProcessEmbeddings(listings);
-  
-      // Log admin action
-      await prisma.adminAction.create({
-        data: {
-          admin_id: req.user.id,
-          action_type: 'reindex_search',
-          target_type: 'listings',
-          target_id: 'all',
-          metadata: JSON.stringify({
-            total_listings: listings.length,
-            successful: result.successful,
-            failed: result.failed,
-            batch_size
-          })
-        }
-      });
-  
-      logger.info('Search reindexing completed', {
-        adminId: req.user.id,
-        totalListings: listings.length,
-        successful: result.successful,
-        failed: result.failed
-      });
-  
-      res.json({
-        success: true,
-        message: 'Search reindexing completed',
-        data: {
-          total_listings: listings.length,
-          successful: result.successful,
-          failed: result.failed,
-          errors: result.errors
-        }
-      });
-  
-    } catch (error) {
-      logger.error('Search reindexing failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Reindexing failed',
-        message: error.message
-      });
-    }
-  };
-  
-  /**
-   * @route   PUT /api/v1/search/admin/suggestions/:id
-   * @desc    Update search suggestion (mark as trending, etc.)
-   * @access  Private (Admin+)
-   */
-  const updateSearchSuggestion = async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { is_trending, search_count } = req.body;
-  
-      const suggestion = await prisma.searchSuggestion.update({
-        where: { id },
-        data: {
-          ...(is_trending !== undefined ? { is_trending } : {}),
-          ...(search_count !== undefined ? { search_count } : {}),
-          updated_at: new Date()
-        }
-      });
-  
-      logger.info('Search suggestion updated', {
-        adminId: req.user.id,
-        suggestionId: id,
-        updates: { is_trending, search_count }
-      });
-  
-      res.json({
-        success: true,
-        data: suggestion
-      });
-  
-    } catch (error) {
-      logger.error('Update search suggestion failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to update suggestion',
-        message: error.message
-      });
-    }
-  };
-  
-  // ================================
-  // EXPORTS
-  // ================================
-  
-  module.exports = {
-    // Public search endpoints
-    universalSearch,
-    imageSearch,
-    autocomplete,
-    getTrendingSearches,
-    getPopularSearches,
-    getSearchRecommendations,
-    trackSearchClick,
+
+    // Build filters
+    const filters = {};
     
-    // Admin endpoints
-    getSearchAnalytics,
-    reindexListings,
-    updateSearchSuggestion
-  };
+    if (category_id) {
+      filters.category_id = category_id;
+    }
+    
+    if (min_price || max_price) {
+      filters.price = {};
+      if (min_price) filters.price.gte = parseFloat(min_price);
+      if (max_price) filters.price.lte = parseFloat(max_price);
+    }
+    
+    if (condition) {
+      filters.condition = condition.toUpperCase();
+    }
+    
+    if (location) {
+      filters.location = {
+        contains: location,
+        mode: 'insensitive'
+      };
+    }
+
+    // Search options
+    const options = {
+      limit: Math.min(parseInt(limit), 50),
+      offset: (parseInt(page) - 1) * parseInt(limit),
+      filters,
+      userId: req.user?.id
+    };
+
+    logger.info('Text search request', { query, options });
+
+    // Perform search
+    const results = await searchByText(query, options);
+
+    // Return results
+    res.json({
+      success: true,
+      data: {
+        query,
+        results,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: results.length,
+          hasMore: results.length === parseInt(limit)
+        },
+        search_metadata: {
+          search_type: 'text',
+          search_method: 'huggingface_ai',
+          processing_time: Date.now() - req.timestamp,
+          filters_applied: Object.keys(filters)
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Text search failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Search failed',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// IMAGE SEARCH
+// ================================
+
+/**
+ * @route   POST /api/v1/search/image
+ * @desc    Image-based search using AI
+ * @access  Public
+ */
+const imageSearch = async (req, res) => {
+  try {
+    const { 
+      image_url, 
+      image_description,
+      limit = 20 
+    } = req.body;
+
+    // Validation
+    if (!image_url && !image_description) {
+      throw new ValidationError('Either image_url or image_description is required');
+    }
+
+    // Use image URL or description as query
+    const imageQuery = image_url || image_description;
+
+    // Search options
+    const options = {
+      limit: Math.min(parseInt(limit), 50),
+      userId: req.user?.id
+    };
+
+    logger.info('Image search request', { imageQuery, options });
+
+    // Perform image search
+    const results = await searchByImage(imageQuery, options);
+
+    // Return results
+    res.json({
+      success: true,
+      data: {
+        query: imageQuery,
+        query_type: image_url ? 'image_url' : 'image_description',
+        results,
+        search_metadata: {
+          search_type: 'image',
+          search_method: 'huggingface_clip',
+          processing_time: Date.now() - req.timestamp,
+          results_count: results.length
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Image search failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Image search failed',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// AUTOCOMPLETE
+// ================================
+
+/**
+ * @route   GET /api/v1/search/autocomplete
+ * @desc    Get search suggestions
+ * @access  Public
+ */
+const autocomplete = async (req, res) => {
+  try {
+    const { q: query, limit = 10 } = req.query;
+
+    if (!query || query.length < 1) {
+      return res.json({
+        success: true,
+        data: {
+          suggestions: []
+        }
+      });
+    }
+
+    // Get popular search terms and category matches
+    const suggestions = await getSearchSuggestions(query, parseInt(limit));
+
+    res.json({
+      success: true,
+      data: {
+        query,
+        suggestions
+      }
+    });
+
+  } catch (error) {
+    logger.error('Autocomplete failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Autocomplete failed',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// RECOMMENDATIONS
+// ================================
+
+/**
+ * @route   GET /api/v1/search/recommendations
+ * @desc    Get AI-powered recommendations
+ * @access  Public
+ */
+const recommendations = async (req, res) => {
+  try {
+    const { 
+      type = 'trending',
+      limit = 10,
+      category_id 
+    } = req.query;
+
+    // Get recommendations
+    const options = {
+      limit: Math.min(parseInt(limit), 20),
+      type,
+      categoryId: category_id
+    };
+
+    logger.info('Recommendations request', { options, userId: req.user?.id });
+
+    const results = await getRecommendations(req.user?.id, options);
+
+    res.json({
+      success: true,
+      data: {
+        recommendations: results,
+        recommendation_type: type,
+        metadata: {
+          generated_at: new Date().toISOString(),
+          user_id: req.user?.id || 'anonymous',
+          algorithm: 'huggingface_ai'
+        }
+      }
+    });
+
+  } catch (error) {
+    logger.error('Recommendations failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Recommendations failed',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// TRENDING SEARCHES
+// ================================
+
+/**
+ * @route   GET /api/v1/search/trending
+ * @desc    Get trending search terms
+ * @access  Public
+ */
+const trendingSearches = async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    // Get trending searches from analytics
+    const trending = await getTrendingSearches(parseInt(limit));
+
+    res.json({
+      success: true,
+      data: {
+        trending_searches: trending,
+        generated_at: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    logger.error('Trending searches failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get trending searches',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// SEARCH ANALYTICS
+// ================================
+
+/**
+ * @route   POST /api/v1/search/analytics/click
+ * @desc    Track search result clicks
+ * @access  Public
+ */
+const trackClick = async (req, res) => {
+  try {
+    const {
+      search_query,
+      listing_id,
+      search_type = 'text',
+      result_position
+    } = req.body;
+
+    // Log the click event
+    await logSearchAnalytics({
+      userId: req.user?.id,
+      queryText: search_query,
+      queryType: search_type,
+      clickedResultId: listing_id,
+      resultPosition: result_position,
+      event: 'click'
+    });
+
+    res.json({
+      success: true,
+      message: 'Click tracked successfully'
+    });
+
+  } catch (error) {
+    logger.error('Click tracking failed:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to track click',
+      message: error.message
+    });
+  }
+};
+
+// ================================
+// HELPER FUNCTIONS
+// ================================
+
+/**
+ * Get search suggestions for autocomplete
+ * @param {string} query - Partial query
+ * @param {number} limit - Number of suggestions
+ * @returns {Promise<Array>} Suggestions
+ */
+const getSearchSuggestions = async (query, limit) => {
+  try {
+    const { prisma } = require('../config/db');
+
+    // Get matching categories
+    const categories = await prisma.category.findMany({
+      where: {
+        name: {
+          contains: query,
+          mode: 'insensitive'
+        }
+      },
+      select: {
+        name: true
+      },
+      take: Math.ceil(limit / 2)
+    });
+
+    // Get popular search terms
+    const popularSearches = await prisma.searchAnalytics.groupBy({
+      by: ['query_text'],
+      where: {
+        query_text: {
+          contains: query,
+          mode: 'insensitive'
+        },
+        created_at: {
+          gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Last 30 days
+        }
+      },
+      _count: {
+        query_text: true
+      },
+      orderBy: {
+        _count: {
+          query_text: 'desc'
+        }
+      },
+      take: Math.floor(limit / 2)
+    });
+
+    // Combine suggestions
+    const suggestions = [
+      ...categories.map(cat => ({
+        text: cat.name,
+        type: 'category'
+      })),
+      ...popularSearches.map(search => ({
+        text: search.query_text,
+        type: 'popular_search',
+        count: search._count.query_text
+      }))
+    ];
+
+    return suggestions.slice(0, limit);
+
+  } catch (error) {
+    logger.error('Get suggestions failed:', error);
+    return [];
+  }
+};
+
+/**
+ * Get trending search terms
+ * @param {number} limit - Number of trends
+ * @returns {Promise<Array>} Trending searches
+ */
+const getTrendingSearches = async (limit) => {
+  try {
+    const { prisma } = require('../config/db');
+
+    const trending = await prisma.searchAnalytics.groupBy({
+      by: ['query_text'],
+      where: {
+        created_at: {
+          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
+        },
+        query_text: {
+          not: null
+        }
+      },
+      _count: {
+        query_text: true
+      },
+      orderBy: {
+        _count: {
+          query_text: 'desc'
+        }
+      },
+      take: limit
+    });
+
+    return trending.map(item => ({
+      query: item.query_text,
+      search_count: item._count.query_text
+    }));
+
+  } catch (error) {
+    logger.error('Get trending searches failed:', error);
+    return [];
+  }
+};
+
+// ================================
+// EXPORTS
+// ================================
+
+module.exports = {
+  textSearch,
+  imageSearch,
+  autocomplete,
+  recommendations,
+  trendingSearches,
+  trackClick
+};

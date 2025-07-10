@@ -30,6 +30,7 @@
   "author": "VOID NG",
   "license": "BSD-2-Clause",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.7.1",
     "@tensorflow/tfjs-node": "^4.15.0",
     "aws-sdk": "^2.1502.0",
