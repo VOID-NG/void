@@ -1,5 +1,5 @@
 // apps/backend/src/app.js
-// Fixed Main Express application setup for VOID Marketplace
+// Updated Express application with complete Socket.IO chat integration
 
 const express = require('express');
 const cors = require('cors');
@@ -12,8 +12,9 @@ const { Server } = require('socket.io');
 const path = require('path');
 require('dotenv').config();
 
-// Import utilities (these don't depend on database)
+// Import utilities
 const logger = require('./utils/logger');
+const { initializeSocketHandlers } = require('./utils/socketHandlers');
 
 // ================================
 // MAIN STARTUP FUNCTION
@@ -21,7 +22,7 @@ const logger = require('./utils/logger');
 
 async function startServer() {
   try {
-    logger.info('🚀 Starting VOID Marketplace API...');
+    logger.info('🚀 Starting VOID Marketplace API with Chat System...');
 
     // ================================
     // 1. INITIALIZE DATABASE FIRST
@@ -34,13 +35,13 @@ async function startServer() {
     logger.info('✅ Database connected and ready');
 
     // ================================
-    // 2. CREATE EXPRESS APP
+    // 2. CREATE EXPRESS APP & HTTP SERVER
     // ================================
     
     const app = express();
     const server = createServer(app);
 
-    // Initialize Socket.IO
+    // Initialize Socket.IO with enhanced configuration
     const io = new Server(server, {
       cors: {
         origin: process.env.FRONTEND_URLS?.split(',') || [
@@ -48,15 +49,27 @@ async function startServer() {
           "http://localhost:5173",
           "http://localhost:8081"
         ],
-        credentials: true
+        credentials: true,
+        methods: ["GET", "POST"]
+      },
+      // Enhanced Socket.IO configuration for chat
+      pingTimeout: 60000,
+      pingInterval: 25000,
+      transports: ['websocket', 'polling'],
+      allowUpgrades: true,
+      // Connection state recovery for better UX
+      connectionStateRecovery: {
+        maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+        skipMiddlewares: true,
       }
     });
+
+    logger.info('✅ Socket.IO server initialized with chat configuration');
 
     // ================================
     // 3. SECURITY MIDDLEWARE
     // ================================
 
-    // Security headers
     app.use(helmet({
       crossOriginEmbedderPolicy: false,
       contentSecurityPolicy: {
@@ -65,7 +78,7 @@ async function startServer() {
           styleSrc: ["'self'", "'unsafe-inline'"],
           scriptSrc: ["'self'"],
           imgSrc: ["'self'", "data:", "https:"],
-          connectSrc: ["'self'"],
+          connectSrc: ["'self'", "ws:", "wss:"], // Allow WebSocket connections
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           mediaSrc: ["'self'"],
@@ -77,7 +90,6 @@ async function startServer() {
     // CORS configuration
     app.use(cors({
       origin: function (origin, callback) {
-        // Allow requests with no origin (mobile apps, etc.)
         if (!origin) return callback(null, true);
         
         const allowedOrigins = process.env.FRONTEND_URLS?.split(',') || [
@@ -90,7 +102,6 @@ async function startServer() {
         if (allowedOrigins.includes(origin)) {
           callback(null, true);
         } else {
-          // Allow all origins in development
           if (process.env.NODE_ENV !== 'production') {
             callback(null, true);
           } else {
@@ -110,7 +121,7 @@ async function startServer() {
     // General rate limiting
     const limiter = rateLimit({
       windowMs: 15 * 60 * 1000, // 15 minutes
-      max: process.env.NODE_ENV === 'production' ? 100 : 1000,
+      max: process.env.NODE_ENV === 'production' ? 1000 : 5000,
       message: {
         error: 'Too many requests from this IP, please try again later.',
         retryAfter: '15 minutes'
@@ -123,7 +134,7 @@ async function startServer() {
 
     // Stricter rate limiting for auth endpoints
     const authLimiter = rateLimit({
-      windowMs: 15 * 60 * 1000, // 15 minutes
+      windowMs: 15 * 60 * 1000,
       max: 10,
       message: {
         error: 'Too many authentication attempts, please try again later.',
@@ -133,13 +144,24 @@ async function startServer() {
 
     app.use('/api/v1/auth/login', authLimiter);
     app.use('/api/v1/auth/register', authLimiter);
-    app.use('/api/v1/auth/forgot-password', authLimiter);
+
+    // More lenient rate limiting for chat endpoints
+    const chatLimiter = rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minute
+      max: 100, // 100 requests per minute for chat
+      message: {
+        error: 'Too many chat requests, please slow down.',
+        retryAfter: '1 minute'
+      }
+    });
+
+    app.use('/api/v1/chat', chatLimiter);
+    app.use('/api/v1/messages', chatLimiter);
 
     // ================================
     // 5. GENERAL MIDDLEWARE
     // ================================
 
-    // Compression
     app.use(compression());
 
     // Logging
@@ -151,7 +173,7 @@ async function startServer() {
       app.use(morgan('dev'));
     }
 
-    // Body parsing
+    // Body parsing with increased limits for file uploads
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -170,8 +192,6 @@ async function startServer() {
       }
     });
 
-    logger.info('Upload directories created/verified');
-
     // Static files for uploads
     app.use('/uploads', express.static('uploads', {
       maxAge: process.env.NODE_ENV === 'production' ? '7d' : '0',
@@ -179,97 +199,142 @@ async function startServer() {
     }));
 
     // ================================
-    // 6. SOCKET.IO SETUP
+    // 6. SOCKET.IO SETUP & CHAT INTEGRATION
     // ================================
 
-    // Store io instance for use in other modules
+    // Store io instance for use in controllers and services
     app.set('io', io);
 
-    // Socket.IO connection handling
+    // Initialize Socket.IO event handlers for chat
+    initializeSocketHandlers(io);
+
+    // Socket.IO connection monitoring
+    let connectedUsers = 0;
+    let activeChats = new Set();
+
     io.on('connection', (socket) => {
-      logger.info(`Socket connected: ${socket.id}`);
+      connectedUsers++;
+      logger.info(`Socket connected: ${socket.id} (Total: ${connectedUsers})`);
 
-      // Join user-specific room for notifications
-      socket.on('join_user_room', (userId) => {
-        socket.join(`user_${userId}`);
-        logger.info(`User ${userId} joined their room`);
+      socket.on('join_chat', (data) => {
+        if (data.chatId) {
+          activeChats.add(data.chatId);
+        }
       });
 
-      // Join chat room
-      socket.on('join_chat', (chatId) => {
-        socket.join(`chat_${chatId}`);
-        logger.info(`Socket ${socket.id} joined chat ${chatId}`);
-      });
-
-      // Leave chat room
-      socket.on('leave_chat', (chatId) => {
-        socket.leave(`chat_${chatId}`);
-        logger.info(`Socket ${socket.id} left chat ${chatId}`);
-      });
-
-      // Handle typing indicators
-      socket.on('typing_start', ({ chatId, userId }) => {
-        socket.to(`chat_${chatId}`).emit('user_typing', { userId, isTyping: true });
-      });
-
-      socket.on('typing_stop', ({ chatId, userId }) => {
-        socket.to(`chat_${chatId}`).emit('user_typing', { userId, isTyping: false });
-      });
-
-      // Handle disconnection
       socket.on('disconnect', () => {
-        logger.info(`Socket disconnected: ${socket.id}`);
+        connectedUsers--;
+        logger.info(`Socket disconnected: ${socket.id} (Total: ${connectedUsers})`);
       });
     });
 
     // ================================
-    // 7. LOAD ROUTES (AFTER DATABASE IS READY)
+    // 7. HEALTH CHECKS & MONITORING
     // ================================
 
-    logger.info('📝 Loading API routes...');
-    
-    // Health check (before routes)
-    app.get('/health', (req, res) => {
-      res.status(200).json({ 
-        status: 'OK', 
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV,
-        version: '1.0.0',
-        database: 'connected'
+    // Enhanced health check with chat system status
+    app.get('/health', async (req, res) => {
+      try {
+        // Check database
+        const dbHealth = await prisma.$queryRaw`SELECT 1`;
+        
+        // Check Socket.IO
+        const socketHealth = {
+          connected_users: connectedUsers,
+          active_chats: activeChats.size,
+          engine_ready: io.engine.readyState === 'open'
+        };
+
+        res.status(200).json({ 
+          status: 'healthy', 
+          timestamp: new Date().toISOString(),
+          environment: process.env.NODE_ENV,
+          version: '1.0.0',
+          services: {
+            database: 'connected',
+            websocket: 'active',
+            chat_system: 'operational'
+          },
+          metrics: {
+            uptime: process.uptime(),
+            memory_usage: process.memoryUsage(),
+            socket_stats: socketHealth
+          }
+        });
+      } catch (error) {
+        res.status(500).json({
+          status: 'unhealthy',
+          error: error.message,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+
+    // Chat system status endpoint
+    app.get('/api/v1/chat/status', (req, res) => {
+      res.json({
+        success: true,
+        data: {
+          websocket_connected: connectedUsers > 0,
+          connected_users: connectedUsers,
+          active_chats: activeChats.size,
+          server_time: new Date().toISOString()
+        }
       });
     });
 
     // API documentation endpoint
     app.get('/api', (req, res) => {
       res.json({
-        message: 'VOID Marketplace API v1',
+        message: 'VOID Marketplace API v1 with Real-time Chat',
         version: '1.0.0',
         documentation: '/api/docs',
         status: 'operational',
+        features: {
+          chat_system: 'enabled',
+          real_time_messaging: 'enabled',
+          offer_negotiation: 'enabled',
+          file_uploads: 'enabled',
+          ai_search: 'enabled'
+        },
         endpoints: {
           auth: '/api/v1/auth',
           listings: '/api/v1/listings',
           search: '/api/v1/search',
-          recommendations: '/api/v1/recommendations',
           chat: '/api/v1/chat',
+          messages: '/api/v1/messages',
           transactions: '/api/v1/transactions',
           notifications: '/api/v1/notifications',
-          promotions: '/api/v1/promotions',
-          subscriptions: '/api/v1/subscriptions',
-          reviews: '/api/v1/reviews',
           admin: '/api/v1/admin'
+        },
+        websocket: {
+          url: `ws://${req.get('host')}`,
+          events: [
+            'join_user_room',
+            'join_chat',
+            'send_message',
+            'typing_start',
+            'typing_stop',
+            'send_offer',
+            'respond_to_offer'
+          ]
         }
       });
     });
 
-    // Load routes AFTER database is connected
+    // ================================
+    // 8. LOAD ROUTES
+    // ================================
+
+    logger.info('📝 Loading API routes...');
+    
     const routes = require('./routes');
     app.use('/api/v1', routes);
 
     logger.info('✅ API routes loaded successfully');
 
     // ================================
-    // 8. ERROR HANDLING
+    // 9. ERROR HANDLING
     // ================================
 
     // 404 handler
@@ -277,16 +342,23 @@ async function startServer() {
       res.status(404).json({
         success: false,
         error: 'Route not found',
-        message: `The requested endpoint ${req.method} ${req.originalUrl} does not exist.`
+        message: `The requested endpoint ${req.method} ${req.originalUrl} does not exist.`,
+        available_endpoints: [
+          '/api/v1/auth',
+          '/api/v1/listings', 
+          '/api/v1/search',
+          '/api/v1/chat',
+          '/api/v1/messages'
+        ]
       });
     });
 
-    // Global error handler (load after database is ready)
+    // Global error handler
     const { errorHandler } = require('./middleware/errorMiddleware');
     app.use(errorHandler);
 
     // ================================
-    // 9. START SERVER
+    // 10. START SERVER
     // ================================
 
     const PORT = process.env.PORT || 5000;
@@ -298,31 +370,38 @@ async function startServer() {
       logger.info(`🌐 Server running on http://${HOST}:${PORT}`);
       logger.info(`📊 Health check: http://${HOST}:${PORT}/health`);
       logger.info(`🔗 API Documentation: http://${HOST}:${PORT}/api`);
-      logger.info(`📡 Socket.IO enabled for real-time features`);
+      logger.info(`💬 Chat WebSocket: ws://${HOST}:${PORT}`);
+      logger.info(`📡 Real-time features: enabled`);
       logger.info('✅ Ready for connections!');
     });
 
     // ================================
-    // 10. GRACEFUL SHUTDOWN
+    // 11. GRACEFUL SHUTDOWN
     // ================================
 
     const gracefulShutdown = (signal) => {
       logger.info(`Received ${signal}. Starting graceful shutdown...`);
       
-      server.close(() => {
-        logger.info('HTTP server closed');
+      // Close Socket.IO connections
+      io.close(() => {
+        logger.info('Socket.IO server closed');
         
-        // Close database connections
-        prisma.$disconnect()
-          .then(() => {
-            logger.info('Database disconnected');
-            logger.info('Graceful shutdown completed');
-            process.exit(0);
-          })
-          .catch((error) => {
-            logger.error('Error during database disconnect:', error);
-            process.exit(1);
-          });
+        // Close HTTP server
+        server.close(() => {
+          logger.info('HTTP server closed');
+          
+          // Close database connections
+          prisma.$disconnect()
+            .then(() => {
+              logger.info('Database disconnected');
+              logger.info('Graceful shutdown completed');
+              process.exit(0);
+            })
+            .catch((error) => {
+              logger.error('Error during database disconnect:', error);
+              process.exit(1);
+            });
+        });
       });
 
       // Force close after 30 seconds
@@ -350,13 +429,11 @@ async function startServer() {
 // GLOBAL ERROR HANDLERS
 // ================================
 
-// Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
   console.error('💥 Uncaught Exception:', error);
   process.exit(1);
 });
 
-// Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
   process.exit(1);
@@ -366,7 +443,6 @@ process.on('unhandledRejection', (reason, promise) => {
 // START THE APPLICATION
 // ================================
 
-// Only start server if this file is run directly
 if (require.main === module) {
   startServer();
 }
