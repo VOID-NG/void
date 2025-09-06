@@ -8,6 +8,8 @@ const sharp = require('sharp');
 const FormData = require('form-data');
 const { prisma } = require('../config/db');
 const logger = require('./logger');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { tryConsume } = require('./rateLimiter');
 
 // ================================
 // CONFIGURATION
@@ -31,6 +33,9 @@ const EMBEDDING_CONFIG = {
   BATCH_SIZE: 10,
   RETRY_ATTEMPTS: 3,
   RETRY_DELAY: 1000,
+  // Gemini free-tier friendly settings
+  GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  GEMINI_RPM: parseInt(process.env.GEMINI_RPM || '15', 10)
 };
 
 // ================================
@@ -83,16 +88,36 @@ const preprocessImage = async (imagePath, options = {}) => {
  */
 const extractImageFeatures = async (imagePath) => {
   try {
-    // This would integrate with vision AI services like:
-    // - OpenAI Vision API
-    // - Google Cloud Vision
-    // - Azure Computer Vision
-    // - AWS Rekognition
-    
-    // For now, we'll extract basic features from filename and metadata
+    // Try Gemini first for a concise product-oriented description
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      // Respect free-tier rate limit
+      const rl = tryConsume('gemini', EMBEDDING_CONFIG.GEMINI_RPM);
+      if (rl.allowed) {
+        try {
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({ model: EMBEDDING_CONFIG.GEMINI_MODEL });
+
+          const imageBuffer = await sharp(imagePath).jpeg({ quality: 90 }).toBuffer();
+          const base64 = imageBuffer.toString('base64');
+          const prompt = 'Describe this product in one concise sentence for marketplace search. Include: product type, brand (if visible), color, and one key feature. Keep it under 50 words.';
+          const imagePart = { inlineData: { data: base64, mimeType: 'image/jpeg' } };
+          const result = await model.generateContent([prompt, imagePart]);
+          const description = (result.response && result.response.text ? result.response.text() : '').trim();
+          if (description) {
+            return description;
+          }
+        } catch (gemErr) {
+          logger.warn('Gemini description failed, falling back to metadata', { error: gemErr.message });
+        }
+      } else {
+        logger.debug('Gemini rate limited, using metadata fallback', { waitMs: rl.waitMs });
+      }
+    }
+
+    // Fallback: extract basic features from filename and metadata
     const filename = path.basename(imagePath, path.extname(imagePath));
     const metadata = await sharp(imagePath).metadata();
-    
     const features = [
       filename.replace(/[-_]/g, ' '),
       `${metadata.width}x${metadata.height}`,

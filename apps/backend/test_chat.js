@@ -22,7 +22,9 @@ const TEST_CONFIG = {
       email: 'vendor@test.com', 
       password: 'TestPass123!',
       username: 'testvendor',
-      role: 'VENDOR'
+      role: 'VENDOR',
+      business_name: 'Test Vendor Business',
+      business_address: '123 Test Street, Test City, TC 12345'
     }
   }
 };
@@ -52,7 +54,7 @@ class ChatAPITester {
             password: userData.password
           });
 
-          this.tokens[userType] = loginResponse.data.data.tokens.access_token;
+          this.tokens[userType] = loginResponse.data.data.accessToken;
           this.users[userType] = loginResponse.data.data.user;
           
           console.log(`✅ ${userType} logged in successfully`);
@@ -63,10 +65,12 @@ class ChatAPITester {
           const registerResponse = await axios.post(`${TEST_CONFIG.API_BASE_URL}/auth/register`, {
             ...userData,
             first_name: `Test ${userType}`,
-            last_name: 'User'
+            last_name: 'User',
+            agree_terms: true,
+            agree_privacy: true
           });
 
-          this.tokens[userType] = registerResponse.data.data.tokens.access_token;
+          this.tokens[userType] = registerResponse.data.data.accessToken;
           this.users[userType] = registerResponse.data.data.user;
           
           console.log(`✅ ${userType} registered successfully`);

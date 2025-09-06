@@ -4,7 +4,7 @@
 // =================================================================
 
 const express = require('express');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
 
 const reviewRouter = express.Router();
@@ -34,7 +34,7 @@ reviewRouter.get('/:listingId', async (req, res) => {
   }
 });
 
-reviewRouter.post('/', authenticateToken, async (req, res) => {
+reviewRouter.post('/', verifyToken, async (req, res) => {
   try {
     const { listing_id, rating, comment } = req.body;
     const { prisma } = require('../config/db');
@@ -63,7 +63,7 @@ reviewRouter.post('/', authenticateToken, async (req, res) => {
 // =================================================================
 
 const notificationRouter = express.Router();
-notificationRouter.use(authenticateToken);
+notificationRouter.use(verifyToken);
 
 notificationRouter.get('/', async (req, res) => {
   try {
@@ -162,7 +162,7 @@ promotionRouter.post('/validate', async (req, res) => {
 // =================================================================
 
 const subscriptionRouter = express.Router();
-subscriptionRouter.use(authenticateToken);
+subscriptionRouter.use(verifyToken);
 
 subscriptionRouter.get('/plans', async (req, res) => {
   try {
@@ -222,7 +222,7 @@ subscriptionRouter.post('/upgrade', async (req, res) => {
 
 const { requireMinRole } = require('../middleware/roleMiddleware');
 const adminRouter = express.Router();
-adminRouter.use(authenticateToken);
+adminRouter.use(verifyToken);
 adminRouter.use(requireMinRole('ADMIN'));
 
 // Dashboard stats

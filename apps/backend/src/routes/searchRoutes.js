@@ -10,9 +10,16 @@ const {
   trendingSearches, 
   trackClick 
 } = require('../controllers/searchController');
-const { authenticateToken } = require('../middleware/authMiddleware');
-const { validateRequest } = require('../middleware/validateMiddleware');
-const { searchValidation } = require('../validators/searchValidator');
+const { verifyToken } = require('../middleware/authMiddleware');
+const { validate, Joi } = require('../middleware/validateMiddleware');
+const { 
+  textSearch: textSearchValidation,
+  imageSearch: imageSearchValidation,
+  autocomplete: autocompleteValidation,
+  recommendations: recommendationsValidation,
+  trackClick: trackClickValidation,
+  similarSearch: similarSearchValidation
+} = require('../validators/searchValidator');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -33,7 +40,7 @@ const optionalAuth = (req, res, next) => {
   
   if (token) {
     // Try to authenticate, but don't fail if invalid
-    authenticateToken(req, res, (err) => {
+    verifyToken(req, res, (err) => {
       // Continue regardless of auth result
       next();
     });
@@ -54,7 +61,7 @@ const optionalAuth = (req, res, next) => {
  */
 router.get('/', 
   optionalAuth,
-  validateRequest(searchValidation.textSearch),
+  validate({ query: Joi.object(textSearchValidation.query) }),
   textSearch
 );
 
@@ -67,7 +74,7 @@ router.get('/',
  */
 router.post('/image',
   optionalAuth,
-  validateRequest(searchValidation.imageSearch),
+  validate(imageSearchValidation),
   imageSearch
 );
 
@@ -79,7 +86,7 @@ router.post('/image',
  */
 router.get('/autocomplete',
   optionalAuth,
-  validateRequest(searchValidation.autocomplete),
+  validate({ query: Joi.object(autocompleteValidation.query) }),
   autocomplete
 );
 
@@ -91,7 +98,7 @@ router.get('/autocomplete',
  */
 router.get('/recommendations',
   optionalAuth,
-  validateRequest(searchValidation.recommendations),
+  validate({ query: Joi.object(recommendationsValidation.query) }),
   recommendations
 );
 
@@ -119,7 +126,7 @@ router.get('/trending',
  */
 router.post('/analytics/click',
   optionalAuth,
-  validateRequest(searchValidation.trackClick),
+  validate(trackClickValidation),
   trackClick
 );
 
@@ -136,7 +143,7 @@ router.post('/analytics/click',
  */
 router.post('/similar',
   optionalAuth,
-  validateRequest(searchValidation.similarSearch),
+  validate(similarSearchValidation),
   async (req, res) => {
     try {
       const { listing_id, limit = 10 } = req.body;
@@ -205,7 +212,7 @@ router.post('/similar',
  * @access  Private
  */
 router.get('/history',
-  authenticateToken,
+  verifyToken,
   async (req, res) => {
     try {
       const { limit = 20 } = req.query;
@@ -253,7 +260,7 @@ router.get('/history',
  * @access  Private
  */
 router.delete('/history',
-  authenticateToken,
+  verifyToken,
   async (req, res) => {
     try {
       const { prisma } = require('../config/db');

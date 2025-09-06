@@ -18,6 +18,7 @@ const {
 } = require('../middleware/errorMiddleware');
 const { organizeUploadedFiles, deleteFile } = require('../middleware/uploadMiddleware');
 const logger = require('../utils/logger');
+const { generateListingEmbeddings: generateListingEmbeddingsAI } = require('../utils/imageEmbeddingUtils');
 
 // ================================
 // LISTING CREATION
@@ -150,9 +151,18 @@ const createListing = async (listingData, user, files = []) => {
     });
 
     // Generate embeddings asynchronously (don't wait for completion)
-    generateListingEmbeddings(listing.id, { title, description, tags }).catch(error => {
-      logger.error('Failed to generate embeddings for listing:', error);
-    });
+    try {
+      const imagesForAI = (organizedFiles.images || []).map((img, index) => ({
+        url: img.processedUrl || img.url,
+        is_primary: index === 0
+      }));
+      generateListingEmbeddingsAI(listing.id, { title, description, tags, images: imagesForAI })
+        .catch(error => {
+          logger.error('Failed to generate AI embeddings for listing:', error);
+        });
+    } catch (e) {
+      logger.warn('Skipped AI embeddings due to preparation error', { error: e.message });
+    }
 
     // Log the creation
     logger.info('Listing created successfully', {
@@ -569,13 +579,20 @@ const updateListing = async (listingId, updateData, user, files = []) => {
 
     // Regenerate embeddings if content changed
     if (filteredData.title || filteredData.description || filteredData.tags) {
-      generateListingEmbeddings(listingId, {
-        title: filteredData.title || existingListing.title,
-        description: filteredData.description || existingListing.description,
-        tags: filteredData.tags || existingListing.tags
-      }).catch(error => {
-        logger.error('Failed to regenerate embeddings:', error);
-      });
+      try {
+        const primaryImage = existingListing.images?.[0];
+        const imagesForAI = primaryImage ? [{ url: primaryImage.url, is_primary: true }] : [];
+        generateListingEmbeddingsAI(listingId, {
+          title: filteredData.title || existingListing.title,
+          description: filteredData.description || existingListing.description,
+          tags: filteredData.tags || existingListing.tags,
+          images: imagesForAI
+        }).catch(error => {
+          logger.error('Failed to regenerate AI embeddings:', error);
+        });
+      } catch (e) {
+        logger.warn('Skipped AI embedding regeneration due to preparation error', { error: e.message });
+      }
     }
 
     logger.info('Listing updated successfully', {

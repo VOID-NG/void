@@ -64,7 +64,7 @@ const textSearch = {
 // ================================
 
 const imageSearch = {
-  body: {
+  body: Joi.object({
     image_url: Joi.string()
       .uri()
       .optional()
@@ -94,14 +94,15 @@ const imageSearch = {
       .max(1)
       .default(0.7)
       .optional()
-  }
-}.refine(
-  (data) => data.image_url || data.image_description,
-  {
-    message: 'Either image_url or image_description must be provided',
-    path: ['image_url']
-  }
-);
+  }).custom((value, helpers) => {
+    if (!value.image_url && !value.image_description) {
+      return helpers.error('custom.imageRequired');
+    }
+    return value;
+  }).messages({
+    'custom.imageRequired': 'Either image_url or image_description must be provided'
+  })
+};
 
 // ================================
 // AUTOCOMPLETE VALIDATION

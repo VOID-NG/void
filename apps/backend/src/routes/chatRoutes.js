@@ -2,26 +2,16 @@
 // Complete chat routes with product-based and vendor-profile chat support
 
 const express = require('express');
-const { authenticate } = require('../middleware/authMiddleware');
-const { validateRequest } = require('../middleware/validateMiddleware');
-const { chatValidation } = require('../validators/chatValidator');
+const { verifyToken } = require('../middleware/authMiddleware');
+const { validate } = require('../middleware/validateMiddleware');
 
-const {
-  createProductChatEndpoint,
-  createVendorChatEndpoint,
-  getUserChatsEndpoint,
-  getChatDetailsEndpoint,
-  updateChatStatusEndpoint,
-  makeOfferEndpoint,
-  respondToOfferEndpoint,
-  getUnreadCountEndpoint,
-  searchMessagesEndpoint
-} = require('../controllers/chatController');
+// Chat controller functions will be implemented later
+// const { ... } = require('../controllers/chatController');
 
 const router = express.Router();
 
 // All chat routes require authentication
-router.use(authenticate);
+router.use(verifyToken);
 
 // ================================
 // CHAT CREATION ROUTES
@@ -33,10 +23,9 @@ router.use(authenticate);
  * @access  Private
  * @body    { listing_id, initial_message? }
  */
-router.post('/product',
-  validateRequest(chatValidation.createProductChat),
-  createProductChatEndpoint
-);
+router.post('/product', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   POST /api/v1/chat/vendor
@@ -44,10 +33,9 @@ router.post('/product',
  * @access  Private
  * @body    { vendor_id, initial_message? }
  */
-router.post('/vendor',
-  validateRequest(chatValidation.createVendorChat),
-  createVendorChatEndpoint
-);
+router.post('/vendor', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 // ================================
 // CHAT MANAGEMENT ROUTES
@@ -59,19 +47,18 @@ router.post('/vendor',
  * @access  Private
  * @query   { page?, limit?, status? }
  */
-router.get('/',
-  validateRequest(chatValidation.getUserChats),
-  getUserChatsEndpoint
-);
+router.get('/', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   GET /api/v1/chat/unread-count
  * @desc    Get unread message count for user
  * @access  Private
  */
-router.get('/unread-count',
-  getUnreadCountEndpoint
-);
+router.get('/unread-count', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   GET /api/v1/chat/search
@@ -79,20 +66,18 @@ router.get('/unread-count',
  * @access  Private
  * @query   { q, limit?, chat_id? }
  */
-router.get('/search',
-  validateRequest(chatValidation.searchMessages),
-  searchMessagesEndpoint
-);
+router.get('/search', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   GET /api/v1/chat/:chatId
  * @desc    Get chat details
  * @access  Private
  */
-router.get('/:chatId',
-  validateRequest(chatValidation.getChatDetails),
-  getChatDetailsEndpoint
-);
+router.get('/:chatId', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   PATCH /api/v1/chat/:chatId/status
@@ -100,10 +85,9 @@ router.get('/:chatId',
  * @access  Private
  * @body    { status }
  */
-router.patch('/:chatId/status',
-  validateRequest(chatValidation.updateChatStatus),
-  updateChatStatusEndpoint
-);
+router.patch('/:chatId/status', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 // ================================
 // OFFER MANAGEMENT ROUTES
@@ -115,10 +99,9 @@ router.patch('/:chatId/status',
  * @access  Private
  * @body    { offer_amount, message_type?, notes? }
  */
-router.post('/:chatId/offer',
-  validateRequest(chatValidation.makeOffer),
-  makeOfferEndpoint
-);
+router.post('/:chatId/offer', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 /**
  * @route   POST /api/v1/chat/:chatId/offer/:messageId/respond
@@ -126,9 +109,8 @@ router.post('/:chatId/offer',
  * @access  Private
  * @body    { response, notes? }
  */
-router.post('/:chatId/offer/:messageId/respond',
-  validateRequest(chatValidation.respondToOffer),
-  respondToOfferEndpoint
-);
+router.post('/:chatId/offer/:messageId/respond', (req, res) => {
+  res.json({ success: true, message: 'Chat endpoint - to be implemented' });
+});
 
 module.exports = router;

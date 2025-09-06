@@ -3,7 +3,7 @@
 
 const express = require('express');
 const { getRecommendations } = require('../services/searchService');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
 
 const router = express.Router();
@@ -12,7 +12,7 @@ const router = express.Router();
 const optionalAuth = (req, res, next) => {
   const token = req.header('Authorization')?.replace('Bearer ', '');
   if (token) {
-    authenticateToken(req, res, (err) => next());
+    verifyToken(req, res, (err) => next());
   } else {
     next();
   }
@@ -103,7 +103,7 @@ router.get('/trending', optionalAuth, async (req, res) => {
  * @desc    Get personalized recommendations for user
  * @access  Private
  */
-router.get('/for-you', authenticateToken, async (req, res) => {
+router.get('/for-you', verifyToken, async (req, res) => {
   try {
     const { limit = 15 } = req.query;
     

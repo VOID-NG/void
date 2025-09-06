@@ -17,11 +17,13 @@ const recommendationRoutes = require('./recommendationRoutes');
 const chatRoutes = require('./chatRoutes');
 const messageRoutes = require('./messageRoutes');
 const transactionRoutes = require('./transactionRoutes');
-const reviewRoutes = require('./reviewRoutes');
-const notificationRoutes = require('./notificationRoutes');
-const promotionRoutes = require('./promotionRoutes');
-const subscriptionRoutes = require('./subscriptionRoutes');
-const adminRoutes = require('./adminRoutes');
+const { 
+  reviewRoutes, 
+  notificationRoutes, 
+  promotionRoutes, 
+  subscriptionRoutes, 
+  adminRoutes 
+} = require('./reviewRoutes');
 
 // Initialize router
 const router = express.Router();

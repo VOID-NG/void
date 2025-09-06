@@ -160,7 +160,7 @@ async function testMultipleImages(imageUrls) {
     
     if (result.success) {
       console.log(`✅ SUCCESS (${result.responseTime}ms)`);
-      console.log(`   Description: "${result.description.substring(0, 80)}..."`);
+      console.log(`   Description: ${result.description}`);
       console.log(`   Requests remaining: ${result.requestsRemaining}/minute\n`);
     } else if (result.rateLimited) {
       console.log(`⏳ RATE LIMITED: ${result.error}`);

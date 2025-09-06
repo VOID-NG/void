@@ -3,12 +3,12 @@
 
 const { 
   searchByText, 
-  searchByImage, 
-  getRecommendations,
+  searchByMedia, 
+  getAIRecommendations,
   logSearchAnalytics 
 } = require('../services/searchService');
 const logger = require('../utils/logger');
-const { ValidationError } = require('../utils/errors');
+const { ValidationError } = require('../middleware/errorMiddleware');
 
 // ================================
 // TEXT SEARCH
@@ -143,7 +143,7 @@ const imageSearch = async (req, res) => {
     logger.info('Image search request', { imageQuery, options });
 
     // Perform image search
-    const results = await searchByImage(imageQuery, options);
+    const results = await searchByMedia(imageQuery, options);
 
     // Return results
     res.json({
@@ -154,7 +154,7 @@ const imageSearch = async (req, res) => {
         results,
         search_metadata: {
           search_type: 'image',
-          search_method: 'huggingface_clip',
+          search_method: 'gemini_25_media',
           processing_time: Date.now() - req.timestamp,
           results_count: results.length
         }
@@ -240,7 +240,7 @@ const recommendations = async (req, res) => {
 
     logger.info('Recommendations request', { options, userId: req.user?.id });
 
-    const results = await getRecommendations(req.user?.id, options);
+    const results = await getAIRecommendations(req.user?.id, options);
 
     res.json({
       success: true,
@@ -250,7 +250,7 @@ const recommendations = async (req, res) => {
         metadata: {
           generated_at: new Date().toISOString(),
           user_id: req.user?.id || 'anonymous',
-          algorithm: 'huggingface_ai'
+          algorithm: 'gemini_25_ai'
         }
       }
     });

@@ -2,15 +2,15 @@
 // Transaction and escrow management routes
 
 const express = require('express');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { verifyToken } = require('../middleware/authMiddleware');
 const { requireRole, requireMinRole } = require('../middleware/roleMiddleware');
-const { validateRequest } = require('../middleware/validateMiddleware');
+const { validate } = require('../middleware/validateMiddleware');
 const logger = require('../utils/logger');
 
 const router = express.Router();
 
 // All transaction routes require authentication
-router.use(authenticateToken);
+router.use(verifyToken);
 
 // ================================
 // TRANSACTION ROUTES

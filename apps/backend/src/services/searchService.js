@@ -5,15 +5,19 @@ const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { prisma } = require('../config/db');
 const logger = require('../utils/logger');
+const { tryConsume } = require('../utils/rateLimiter');
 
 // ================================
 // NEXT-GEN API CONFIGURATION
 // ================================
 
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const GEMINI_RPM = parseInt(process.env.GEMINI_RPM || '15', 10);
+
 const API_CONFIG = {
   // Gemini 2.5 Flash Lite (ADVANCED CAPABILITIES)
   GEMINI: {
-    MODEL: 'gemini-2.5-flash-lite-preview-06-17',
+    MODEL: GEMINI_MODEL,
     CAPABILITIES: {
       structuredOutputs: true,
       functionCalling: true,
@@ -47,7 +51,8 @@ const API_CONFIG = {
   // Search configuration
   SIMILARITY_THRESHOLD: 0.65,
   MAX_RESULTS: 50,
-  ENABLE_ADVANCED_FEATURES: true
+  // Enable advanced Gemini features only if explicitly enabled and the model supports them (2.5 family)
+  ENABLE_ADVANCED_FEATURES: (process.env.ENABLE_ADVANCED_SEARCH_FEATURES === 'true') && /gemini-2\.5/.test(GEMINI_MODEL)
 };
 
 // ================================
@@ -209,13 +214,26 @@ const analyzeProductAdvanced = async (mediaInput, mediaType = 'image', options =
       model: API_CONFIG.GEMINI.MODEL 
     });
 
+    // Rate limit guard for Gemini calls
+    const rl = tryConsume('gemini', GEMINI_RPM);
+    if (!rl.allowed) {
+      logger.warn('Gemini rate limited for product analysis', { waitMs: rl.waitMs });
+      return {
+        success: false,
+        error: `rate_limited_wait_${rl.waitMs}`,
+        fallback: await simpleProductAnalysis(mediaInput, mediaType)
+      };
+    }
+
     const genAI = initializeGemini();
     const model = genAI.getGenerativeModel({ 
       model: API_CONFIG.GEMINI.MODEL,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: STRUCTURED_SCHEMAS.PRODUCT_ANALYSIS
-      }
+      ...(API_CONFIG.ENABLE_ADVANCED_FEATURES ? {
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: STRUCTURED_SCHEMAS.PRODUCT_ANALYSIS
+        }
+      } : {})
     });
 
     let mediaPart;
@@ -272,7 +290,18 @@ Provide detailed, accurate analysis optimized for marketplace listings.`;
     const analysisText = result.response.text();
     
     // Parse structured JSON response
-    const analysis = JSON.parse(analysisText);
+    let analysis;
+    try {
+      analysis = JSON.parse(analysisText);
+    } catch (parseErr) {
+      // If advanced schema wasn't enforced, try to coerce a minimal structure
+      logger.warn('Failed to parse structured analysis JSON, using simple fallback');
+      return {
+        success: false,
+        error: 'parse_error',
+        fallback: await simpleProductAnalysis(mediaInput, mediaType)
+      };
+    }
 
     logger.debug('Advanced product analysis completed', {
       category: analysis.productInfo?.category,
@@ -311,13 +340,28 @@ const analyzeSearchIntent = async (searchQuery, context = {}) => {
   try {
     logger.debug('Analyzing search intent with Gemini 2.5', { searchQuery });
 
+    // Rate limit guard for Gemini calls
+    const rl = tryConsume('gemini', GEMINI_RPM);
+    if (!rl.allowed) {
+      logger.warn('Gemini rate limited for search intent', { waitMs: rl.waitMs });
+      return {
+        success: false,
+        fallback: {
+          expandedKeywords: searchQuery.split(' '),
+          basicStrategy: true
+        }
+      };
+    }
+
     const genAI = initializeGemini();
     const model = genAI.getGenerativeModel({ 
       model: API_CONFIG.GEMINI.MODEL,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: STRUCTURED_SCHEMAS.SEARCH_ANALYSIS
-      }
+      ...(API_CONFIG.ENABLE_ADVANCED_FEATURES ? {
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: STRUCTURED_SCHEMAS.SEARCH_ANALYSIS
+        }
+      } : {})
     });
 
     const prompt = `Analyze this marketplace search query and determine the optimal search strategy.
@@ -340,7 +384,19 @@ Provide actionable search optimization recommendations.`;
     const result = await model.generateContent(prompt);
     const strategyText = result.response.text();
     
-    const strategy = JSON.parse(strategyText);
+    let strategy;
+    try {
+      strategy = JSON.parse(strategyText);
+    } catch (parseErr) {
+      // Fallback if JSON not strictly returned
+      return {
+        success: false,
+        fallback: {
+          expandedKeywords: searchQuery.split(' '),
+          basicStrategy: true
+        }
+      };
+    }
 
     logger.debug('Search intent analysis completed', {
       primaryIntent: strategy.searchIntent?.primaryIntent,
@@ -375,6 +431,14 @@ Provide actionable search optimization recommendations.`;
  */
 const getMarketData = async (productInfo) => {
   try {
+    if (!API_CONFIG.ENABLE_ADVANCED_FEATURES) {
+      return { success: false, error: 'advanced_features_disabled' };
+    }
+
+    const rl = tryConsume('gemini', GEMINI_RPM);
+    if (!rl.allowed) {
+      return { success: false, error: 'rate_limited' };
+    }
     const genAI = initializeGemini();
     const model = genAI.getGenerativeModel({ 
       model: API_CONFIG.GEMINI.MODEL,
