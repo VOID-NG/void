@@ -1,7 +1,7 @@
 // apps/backend/src/services/chatService.js
 // Complete chat service layer for VOID Marketplace
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const { CHAT_STATUS, MESSAGE_TYPE, USER_ROLES } = require('../config/constants');
 const logger = require('../utils/logger');
 const notificationService = require('./notificationService');

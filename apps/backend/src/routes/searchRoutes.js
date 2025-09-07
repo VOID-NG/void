@@ -179,7 +179,7 @@ router.get('/saved/:searchId', verifyToken, searchController.executeSavedSearch)
 router.delete('/saved/:searchId', verifyToken, async (req, res) => {
   try {
     const { searchId } = req.params;
-    const searchService = require('../services/searchService');
+    const searchService = require('../services/searchService-original');
 
     await searchService.deleteSavedSearch({
       search_id: searchId,
@@ -217,7 +217,7 @@ router.patch('/saved/:searchId', verifyToken, async (req, res) => {
   try {
     const { searchId } = req.params;
     const updateData = req.body;
-    const searchService = require('../services/searchService');
+    const searchService = require('../services/searchService-original');
 
     const updatedSearch = await searchService.updateSavedSearch({
       search_id: searchId,
@@ -304,7 +304,7 @@ router.get('/analytics/trends',
         category
       } = req.query;
 
-      const searchService = require('../services/searchService');
+      const searchService = require('../services/searchService-original');
       const trends = await searchService.getSearchTrends({
         period,
         groupBy,
@@ -347,7 +347,7 @@ router.get('/analytics/performance',
         end_date
       } = req.query;
 
-      const searchService = require('../services/searchService');
+      const searchService = require('../services/searchService-original');
       const performance = await searchService.getSearchPerformance({
         start_date: start_date ? new Date(start_date) : undefined,
         end_date: end_date ? new Date(end_date) : undefined
@@ -381,7 +381,7 @@ router.get('/analytics/performance',
  */
 router.get('/health', async (req, res) => {
   try {
-    const searchService = require('../services/searchService');
+    const searchService = require('../services/searchService-original');
     const health = await searchService.healthCheck();
 
     res.json({
@@ -411,7 +411,7 @@ router.post('/index/rebuild',
   async (req, res) => {
     try {
       const { full_rebuild = false } = req.body;
-      const searchService = require('../services/searchService');
+      const searchService = require('../services/searchService-original');
 
       // Start async rebuild process
       const rebuildResult = await searchService.rebuildSearchIndex({

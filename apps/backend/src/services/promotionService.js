@@ -1,7 +1,7 @@
 // apps/backend/src/services/promotionService.js
 // Comprehensive promotion and discount management system
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { PROMOTION_TYPE } = require('../config/constants');
 const notificationService = require('./notificationService');

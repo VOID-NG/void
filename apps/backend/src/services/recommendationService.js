@@ -1,7 +1,7 @@
 // apps/backend/src/services/recommendationService.js
 // Advanced AI-powered recommendation engine for Void Marketplace
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { AI_CONFIG, BUSINESS_RULES } = require('../config/constants');
 

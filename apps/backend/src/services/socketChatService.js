@@ -1,7 +1,7 @@
 // apps/backend/src/services/SocketChatService.js
 // Complete real-time chat system with Socket.IO
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { emitToUser, emitToRoom } = require('../utils/socketUtils');
 

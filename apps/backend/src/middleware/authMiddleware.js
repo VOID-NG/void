@@ -2,7 +2,7 @@
 // JWT Authentication middleware for VOID Marketplace
 
 const jwt = require('jsonwebtoken');
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const { USER_STATUS, ERROR_CODES, API_CONFIG } = require('../config/constants');
 const logger = require('../utils/logger');
 

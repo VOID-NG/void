@@ -292,7 +292,7 @@ router.post('/admin/bulk-update',
   async (req, res) => {
     try {
       const { listing_ids, action, reason } = req.body;
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
       const logger = require('../utils/logger');
       
       let updateData = {};
@@ -395,7 +395,7 @@ router.get('/admin/stats',
   requireMinRole(USER_ROLES.ADMIN),
   async (req, res) => {
     try {
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
       
       const [
         totalListings,

@@ -1,7 +1,7 @@
 // apps/backend/src/services/subscriptionService.js
 // Comprehensive subscription and billing management system
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { SUBSCRIPTION_PLAN, SUBSCRIPTION_STATUS, SUBSCRIPTION_FEATURES } = require('../config/constants');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);

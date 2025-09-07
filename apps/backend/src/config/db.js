@@ -1,606 +1,427 @@
-// apps/backend/src/config/db.js
-// Complete database configuration and initialization for VOID Marketplace
+// apps/backend/src/config/db-optimized.js
+// Enterprise-grade database configuration with performance optimizations
 
 const { PrismaClient } = require('@prisma/client');
 const logger = require('../utils/logger');
 
 // ================================
-// PRISMA CLIENT CONFIGURATION
+// ADVANCED DATABASE CONFIGURATION
 // ================================
 
-const prismaConfig = {
-  log: [
-    {
-      emit: 'event',
-      level: 'query',
+const createOptimizedPrismaClient = () => {
+  const prisma = new PrismaClient({
+    // Connection optimization
+    datasources: {
+      db: {
+        url: process.env.DATABASE_URL
+      }
     },
-    {
-      emit: 'event',
-      level: 'error',
-    },
-    {
-      emit: 'event',
-      level: 'info',
-    },
-    {
-      emit: 'event',
-      level: 'warn',
-    },
-  ],
-  errorFormat: 'colorless',
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL
+    
+    // Query optimization
+    log: [
+      {
+        emit: 'event',
+        level: 'query',
+      },
+      {
+        emit: 'event', 
+        level: 'error'
+      },
+      {
+        emit: 'event',
+        level: 'warn'
+      }
+    ],
+    
+    // Performance optimization
+    __internal: {
+      engine: {
+        // Connection pooling configuration
+        connection_limit: parseInt(process.env.DB_CONNECTION_LIMIT) || 50,
+        pool_timeout: parseInt(process.env.DB_POOL_TIMEOUT) || 30,
+        
+        // Query optimization
+        schema_cache_size: parseInt(process.env.DB_SCHEMA_CACHE_SIZE) || 100,
+        query_cache_size: parseInt(process.env.DB_QUERY_CACHE_SIZE) || 1000,
+        
+        // Performance tuning
+        statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT) || 30000,
+        query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 20000,
+      }
     }
-  }
-};
+  });
 
-// Add additional configuration for production
-if (process.env.NODE_ENV === 'production') {
-  prismaConfig.log = ['error', 'warn'];
-}
-
-// Create Prisma client instance
-const prisma = new PrismaClient(prismaConfig);
-
-// ================================
-// EVENT LISTENERS
-// ================================
-
-// Log database queries in development
-if (process.env.NODE_ENV === 'development' && process.env.LOG_DB_QUERIES === 'true') {
+  // ================================
+  // QUERY PERFORMANCE MONITORING
+  // ================================
+  
   prisma.$on('query', (e) => {
-    logger.db(e.query, e.params, e.duration);
-  });
-}
-
-// Log database errors
-prisma.$on('error', (e) => {
-  logger.error('Database Error:', {
-    error: e.message,
-    target: e.target,
-    category: 'database_error'
-  });
-});
-
-// Log database info events
-prisma.$on('info', (e) => {
-  logger.info('Database Info:', {
-    message: e.message,
-    category: 'database_info'
-  });
-});
-
-// Log database warnings
-prisma.$on('warn', (e) => {
-  logger.warn('Database Warning:', {
-    message: e.message,
-    category: 'database_warning'
-  });
-});
-
-// ================================
-// CONNECTION MANAGEMENT
-// ================================
-
-/**
- * Test database connection
- * @returns {Promise<boolean>} Connection success
- */
-const testConnection = async () => {
-  try {
-    await prisma.$connect();
-    logger.info('✅ Database connected successfully');
+    const duration = e.duration;
     
-    // Test a simple query
-    await prisma.$queryRaw`SELECT 1 as test`;
-    logger.info('✅ Database query test successful');
-    
-    return true;
-  } catch (error) {
-    logger.error('❌ Database connection failed:', {
-      error: error.message,
-      code: error.code,
-      meta: error.meta
-    });
-    return false;
-  }
-};
-
-/**
- * Initialize database connection and run migrations
- * @returns {Promise<void>}
- */
-const initializeDatabase = async () => {
-  try {
-    logger.info('🗃️  Initializing database...');
-
-    // Test connection
-    const isConnected = await testConnection();
-    if (!isConnected) {
-      throw new Error('Failed to connect to database');
-    }
-
-    // Check if database is accessible
-    await checkDatabaseAccess();
-
-    // Run health checks
-    await runHealthChecks();
-
-    logger.info('✅ Database initialization completed successfully');
-  } catch (error) {
-    logger.error('❌ Database initialization failed:', error);
-    
-    // Provide helpful troubleshooting info
-    logger.info('🔧 Database troubleshooting steps:');
-    logger.info('1. Check if PostgreSQL is running');
-    logger.info('2. Verify DATABASE_URL in .env file');
-    logger.info('3. Ensure database exists and user has permissions');
-    logger.info('4. Run: npx prisma migrate dev --name init');
-    logger.info('5. Run: npx prisma generate');
-    
-    throw error;
-  }
-};
-
-/**
- * Check database access and permissions
- * @returns {Promise<void>}
- */
-const checkDatabaseAccess = async () => {
-  try {
-    // Check if we can create and drop a test table
-    await prisma.$executeRaw`
-      CREATE TABLE IF NOT EXISTS health_check_test (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `;
-    
-    await prisma.$executeRaw`DROP TABLE IF EXISTS health_check_test`;
-    
-    logger.info('✅ Database permissions verified');
-  } catch (error) {
-    logger.warn('⚠️  Database permission check failed:', error.message);
-    // Don't throw error here as tables might not exist yet
-  }
-};
-
-/**
- * Run database health checks
- * @returns {Promise<void>}
- */
-const runHealthChecks = async () => {
-  try {
-    // Check if main tables exist
-    const tableChecks = await Promise.allSettled([
-      checkTableExists('User'),
-      checkTableExists('Listing'),
-      checkTableExists('Chat'),
-      checkTableExists('Transaction'),
-      checkTableExists('Category')
-    ]);
-
-    const existingTables = tableChecks
-      .filter(result => result.status === 'fulfilled' && result.value)
-      .length;
-
-    logger.info(`📊 Database tables check: ${existingTables}/5 core tables exist`);
-
-    if (existingTables === 0) {
-      logger.warn('⚠️  No core tables found. You may need to run migrations:');
-      logger.info('   npx prisma migrate dev --name init');
-    }
-
-    // Check database size and performance
-    await checkDatabaseStats();
-
-  } catch (error) {
-    logger.warn('Database health checks failed:', error.message);
-  }
-};
-
-/**
- * Check if a table exists
- * @param {string} tableName - Table name to check
- * @returns {Promise<boolean>} Table exists
- */
-const checkTableExists = async (tableName) => {
-  try {
-    const result = await prisma.$queryRaw`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = ${tableName.toLowerCase()}
-      )
-    `;
-    
-    return result[0]?.exists || false;
-  } catch (error) {
-    return false;
-  }
-};
-
-/**
- * Get database statistics
- * @returns {Promise<void>}
- */
-const checkDatabaseStats = async () => {
-  try {
-    // Get database size
-    const sizeResult = await prisma.$queryRaw`
-      SELECT 
-        pg_size_pretty(pg_database_size(current_database())) as size
-    `;
-
-    // Get connection count
-    const connectionResult = await prisma.$queryRaw`
-      SELECT 
-        count(*) as active_connections 
-      FROM pg_stat_activity 
-      WHERE state = 'active'
-    `;
-
-    logger.info('📈 Database statistics:', {
-      size: sizeResult[0]?.size || 'unknown',
-      active_connections: Number(connectionResult[0]?.active_connections) || 0,
-      max_connections: process.env.DB_POOL_MAX || 10
-    });
-
-  } catch (error) {
-    logger.debug('Could not retrieve database stats:', error.message);
-  }
-};
-
-// ================================
-// DATABASE SEEDING
-// ================================
-
-/**
- * Seed database with initial data
- * @returns {Promise<void>}
- */
-const seedDatabase = async () => {
-  try {
-    logger.info('🌱 Seeding database with initial data...');
-
-    // Check if data already exists
-    const userCount = await prisma.user.count();
-    if (userCount > 0) {
-      logger.info('Database already contains data, skipping seed');
-      return;
-    }
-
-    // Seed categories
-    await seedCategories();
-
-    // Seed admin user
-    await seedAdminUser();
-
-    // Seed sample data in development
-    if (process.env.NODE_ENV === 'development') {
-      await seedSampleData();
-    }
-
-    logger.info('✅ Database seeding completed');
-
-  } catch (error) {
-    logger.error('Database seeding failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Seed initial categories
- * @returns {Promise<void>}
- */
-const seedCategories = async () => {
-  try {
-    const categories = [
-      { name: 'Electronics', description: 'Electronic devices and gadgets' },
-      { name: 'Fashion', description: 'Clothing, shoes, and accessories' },
-      { name: 'Home & Garden', description: 'Home decor and garden supplies' },
-      { name: 'Sports & Outdoors', description: 'Sports equipment and outdoor gear' },
-      { name: 'Books & Media', description: 'Books, movies, and music' },
-      { name: 'Toys & Games', description: 'Toys and gaming equipment' },
-      { name: 'Automotive', description: 'Car parts and accessories' },
-      { name: 'Health & Beauty', description: 'Health and beauty products' },
-      { name: 'Collectibles', description: 'Rare and collectible items' },
-      { name: 'Other', description: 'Miscellaneous items' }
-    ];
-
-    for (const category of categories) {
-      await prisma.category.upsert({
-        where: { name: category.name },
-        update: {},
-        create: category
+    // Log slow queries for optimization
+    if (duration > 1000) { // Queries slower than 1 second
+      logger.warn('SLOW QUERY DETECTED', {
+        query: e.query,
+        params: e.params,
+        duration: `${duration}ms`,
+        timestamp: e.timestamp
       });
     }
+    
+    // Log extremely slow queries as errors
+    if (duration > 5000) { // Queries slower than 5 seconds
+      logger.error('CRITICAL SLOW QUERY', {
+        query: e.query,
+        duration: `${duration}ms`,
+        stackTrace: new Error().stack
+      });
+    }
+  });
 
-    logger.info('✅ Categories seeded successfully');
-  } catch (error) {
-    logger.error('Category seeding failed:', error);
-    throw error;
-  }
+  prisma.$on('error', (e) => {
+    logger.error('DATABASE ERROR', {
+      message: e.message,
+      target: e.target,
+      timestamp: e.timestamp
+    });
+  });
+
+  return prisma;
 };
 
-/**
- * Seed admin user
- * @returns {Promise<void>}
- */
-const seedAdminUser = async () => {
-  try {
-    const bcrypt = require('bcryptjs');
-    
-    const adminEmail = process.env.ADMIN_EMAIL || 'admin@voidmarketplace.com';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'SecureAdmin123!';
-    
-    // Check if admin already exists
-    const existingAdmin = await prisma.user.findUnique({
-      where: { email: adminEmail }
-    });
+// ================================
+// READ REPLICA CONFIGURATION
+// ================================
 
-    if (existingAdmin) {
-      logger.info('Admin user already exists');
-      return;
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(adminPassword, 12);
-
-    // Create admin user
-    await prisma.user.create({
-      data: {
-        email: adminEmail,
-        username: 'admin',
-        password_hash: hashedPassword,
-        first_name: 'System',
-        last_name: 'Administrator',
-        role: 'SUPER_ADMIN',
-        status: 'ACTIVE',
-        is_verified: true,
-        email_verified_at: new Date()
-      }
-    });
-
-    logger.info('✅ Admin user created:', { email: adminEmail });
-    logger.warn('🔒 Please change the admin password after first login');
-
-  } catch (error) {
-    logger.error('Admin user seeding failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Seed sample data for development
- * @returns {Promise<void>}
- */
-const seedSampleData = async () => {
-  try {
-    // Only seed in development
-    if (process.env.NODE_ENV !== 'development') {
-      return;
-    }
-
-    logger.info('🧪 Seeding sample development data...');
-
-    // Create test vendor
-    const bcrypt = require('bcryptjs');
-    const testPassword = await bcrypt.hash('TestUser123!', 12);
-
-    const testVendor = await prisma.user.upsert({
-      where: { email: 'vendor@test.com' },
-      update: {},
-      create: {
-        email: 'vendor@test.com',
-        username: 'testvendor',
-        password_hash: testPassword,
-        first_name: 'Test',
-        last_name: 'Vendor',
-        role: 'VENDOR',
-        status: 'ACTIVE',
-        is_verified: true,
-        vendor_verified: true,
-        business_name: 'Test Electronics Store'
-      }
-    });
-
-    // Create test buyer
-    const testBuyer = await prisma.user.upsert({
-      where: { email: 'buyer@test.com' },
-      update: {},
-      create: {
-        email: 'buyer@test.com',
-        username: 'testbuyer',
-        password_hash: testPassword,
-        first_name: 'Test',
-        last_name: 'Buyer',
-        role: 'USER',
-        status: 'ACTIVE',
-        is_verified: true
-      }
-    });
-
-    // Get Electronics category
-    const electronicsCategory = await prisma.category.findFirst({
-      where: { name: 'Electronics' }
-    });
-
-    if (electronicsCategory) {
-      // Create sample listing
-      await prisma.listing.upsert({
-        where: { 
-          vendor_id_title: {
-            vendor_id: testVendor.id,
-            title: 'Sample iPhone 13 Pro'
-          }
+const createReadReplicaClients = () => {
+  const readReplicas = [];
+  const replicaUrls = process.env.DATABASE_READ_REPLICAS?.split(',') || [];
+  
+  replicaUrls.forEach((url, index) => {
+    if (url.trim()) {
+      const replica = new PrismaClient({
+        datasources: {
+          db: { url: url.trim() }
         },
-        update: {},
-        create: {
-          title: 'Sample iPhone 13 Pro',
-          description: 'A sample iPhone 13 Pro listing for testing purposes. This is a demo listing with all the features enabled.',
-          price: 899.99,
-          condition: 'LIKE_NEW',
-          category_id: electronicsCategory.id,
-          vendor_id: testVendor.id,
-          status: 'ACTIVE',
-          tags: ['iphone', 'apple', 'smartphone', 'mobile'],
-          is_featured: true
-        }
+        log: ['error', 'warn']
+      });
+      
+      readReplicas.push(replica);
+      logger.info(`Read replica ${index + 1} configured: ${url.split('@')[1]}`);
+    }
+  });
+  
+  return readReplicas;
+};
+
+// ================================
+// INTELLIGENT QUERY ROUTER
+// ================================
+
+class DatabaseRouter {
+  constructor() {
+    this.writeClient = createOptimizedPrismaClient();
+    this.readReplicas = createReadReplicaClients();
+    this.replicaIndex = 0;
+    this.queryMetrics = new Map();
+  }
+
+  // Get write client for mutations
+  getWriteClient() {
+    return this.writeClient;
+  }
+
+  // Get read client with load balancing
+  getReadClient() {
+    if (this.readReplicas.length === 0) {
+      return this.writeClient; // Fallback to write client
+    }
+
+    // Round-robin load balancing
+    const client = this.readReplicas[this.replicaIndex];
+    this.replicaIndex = (this.replicaIndex + 1) % this.readReplicas.length;
+    
+    return client;
+  }
+
+  // Intelligent routing based on query type
+  getClientForQuery(operation) {
+    const readOperations = ['findMany', 'findFirst', 'findUnique', 'count', 'aggregate'];
+    const writeOperations = ['create', 'update', 'delete', 'upsert', 'createMany', 'updateMany', 'deleteMany'];
+
+    if (readOperations.some(op => operation.includes(op))) {
+      return this.getReadClient();
+    } else if (writeOperations.some(op => operation.includes(op))) {
+      return this.getWriteClient();
+    }
+
+    // Default to write client for safety
+    return this.getWriteClient();
+  }
+
+  // Track query performance
+  trackQuery(operation, duration) {
+    if (!this.queryMetrics.has(operation)) {
+      this.queryMetrics.set(operation, {
+        count: 0,
+        totalDuration: 0,
+        avgDuration: 0,
+        maxDuration: 0
       });
     }
 
-    logger.info('✅ Sample data seeded successfully');
-    logger.info('🧪 Test accounts created:');
-    logger.info('   Vendor: vendor@test.com / TestUser123!');
-    logger.info('   Buyer: buyer@test.com / TestUser123!');
-
-  } catch (error) {
-    logger.error('Sample data seeding failed:', error);
-    throw error;
+    const metrics = this.queryMetrics.get(operation);
+    metrics.count++;
+    metrics.totalDuration += duration;
+    metrics.avgDuration = metrics.totalDuration / metrics.count;
+    metrics.maxDuration = Math.max(metrics.maxDuration, duration);
   }
-};
 
-// ================================
-// DATABASE MAINTENANCE
-// ================================
-
-/**
- * Clean up old data
- * @returns {Promise<void>}
- */
-const cleanupOldData = async () => {
-  try {
-    logger.info('🧹 Starting database cleanup...');
-
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    // Clean up old notifications
-    const deletedNotifications = await prisma.notification.deleteMany({
-      where: {
-        created_at: { lt: thirtyDaysAgo },
-        is_read: true
-      }
-    });
-
-    // Clean up old search analytics
-    const deletedSearchAnalytics = await prisma.searchAnalytics.deleteMany({
-      where: {
-        created_at: { lt: thirtyDaysAgo }
-      }
-    });
-
-    // Clean up old user interactions
-    const deletedInteractions = await prisma.userInteraction.deleteMany({
-      where: {
-        created_at: { lt: thirtyDaysAgo }
-      }
-    });
-
-    logger.info('✅ Database cleanup completed:', {
-      notifications_deleted: deletedNotifications.count,
-      search_analytics_deleted: deletedSearchAnalytics.count,
-      interactions_deleted: deletedInteractions.count
-    });
-
-  } catch (error) {
-    logger.error('Database cleanup failed:', error);
+  // Get performance metrics
+  getPerformanceMetrics() {
+    return Object.fromEntries(this.queryMetrics);
   }
-};
 
-/**
- * Analyze database performance
- * @returns {Promise<Object>} Performance statistics
- */
-const analyzePerformance = async () => {
-  try {
-    // Get table sizes
-    const tableSizes = await prisma.$queryRaw`
-      SELECT 
-        schemaname,
-        tablename,
-        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size,
-        pg_total_relation_size(schemaname||'.'||tablename) AS size_bytes
-      FROM pg_tables 
-      WHERE schemaname = 'public'
-      ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC
-    `;
-
-    // Get slow queries (if available)
-    const slowQueries = await prisma.$queryRaw`
-      SELECT 
-        query,
-        calls,
-        total_time,
-        mean_time,
-        rows
-      FROM pg_stat_statements 
-      WHERE query NOT LIKE '%pg_stat_statements%'
-      ORDER BY mean_time DESC 
-      LIMIT 5
-    `.catch(() => []);
-
-    const stats = {
-      table_sizes: tableSizes,
-      slow_queries: slowQueries,
-      analysis_timestamp: new Date().toISOString()
+  // Health check for all clients
+  async healthCheck() {
+    const results = {
+      write: false,
+      readReplicas: []
     };
 
-    logger.info('📊 Database performance analysis completed');
-    return stats;
+    try {
+      await this.writeClient.$queryRaw`SELECT 1`;
+      results.write = true;
+    } catch (error) {
+      logger.error('Write client health check failed:', error);
+    }
 
-  } catch (error) {
-    logger.error('Database performance analysis failed:', error);
-    return { error: error.message };
+    for (let i = 0; i < this.readReplicas.length; i++) {
+      try {
+        await this.readReplicas[i].$queryRaw`SELECT 1`;
+        results.readReplicas.push({ index: i, healthy: true });
+      } catch (error) {
+        logger.error(`Read replica ${i} health check failed:`, error);
+        results.readReplicas.push({ index: i, healthy: false });
+      }
+    }
+
+    return results;
   }
-};
+
+  // Graceful shutdown
+  async disconnect() {
+    try {
+      await this.writeClient.$disconnect();
+      logger.info('Write client disconnected');
+
+      for (let i = 0; i < this.readReplicas.length; i++) {
+        await this.readReplicas[i].$disconnect();
+        logger.info(`Read replica ${i} disconnected`);
+      }
+    } catch (error) {
+      logger.error('Error during database disconnection:', error);
+    }
+  }
+}
 
 // ================================
-// GRACEFUL SHUTDOWN
+// QUERY OPTIMIZATION HELPERS
 // ================================
 
-/**
- * Gracefully disconnect from database
- * @returns {Promise<void>}
- */
-const gracefulShutdown = async () => {
+class QueryOptimizer {
+  static optimizeListingQuery(filters = {}) {
+    const baseQuery = {
+      where: {
+        status: 'ACTIVE',
+        ...filters
+      },
+      select: {
+        id: true,
+        title: true,
+        price: true,
+        condition: true,
+        location: true,
+        is_featured: true,
+        created_at: true,
+        vendor: {
+          select: {
+            id: true,
+            username: true,
+            vendor_verified: true
+          }
+        },
+        category: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
+        listing_images: {
+          where: { is_primary: true },
+          select: {
+            url: true,
+            alt_text: true
+          },
+          take: 1
+        },
+        _count: {
+          select: {
+            reviews: true
+          }
+        }
+      }
+    };
+
+    return baseQuery;
+  }
+
+  static optimizeSearchQuery(searchTerm, filters = {}) {
+    return {
+      where: {
+        AND: [
+          {
+            OR: [
+              {
+                title: {
+                  contains: searchTerm,
+                  mode: 'insensitive'
+                }
+              },
+              {
+                description: {
+                  contains: searchTerm,
+                  mode: 'insensitive'
+                }
+              },
+              {
+                tags: {
+                  hasSome: [searchTerm]
+                }
+              }
+            ]
+          },
+          {
+            status: 'ACTIVE'
+          },
+          ...Object.entries(filters).map(([key, value]) => ({
+            [key]: value
+          }))
+        ]
+      },
+      select: QueryOptimizer.optimizeListingQuery().select,
+      orderBy: [
+        { is_featured: 'desc' },
+        { created_at: 'desc' }
+      ]
+    };
+  }
+
+  static optimizeChatQuery(userId) {
+    return {
+      where: {
+        OR: [
+          { buyer_id: userId },
+          { vendor_id: userId }
+        ]
+      },
+      select: {
+        id: true,
+        listing_id: true,
+        status: true,
+        last_message_at: true,
+        listing: {
+          select: {
+            id: true,
+            title: true,
+            price: true,
+            listing_images: {
+              where: { is_primary: true },
+              select: { url: true },
+              take: 1
+            }
+          }
+        },
+        buyer: {
+          select: {
+            id: true,
+            username: true,
+            first_name: true,
+            avatar_url: true
+          }
+        },
+        vendor: {
+          select: {
+            id: true,
+            username: true,
+            first_name: true,
+            avatar_url: true
+          }
+        },
+        messages: {
+          orderBy: { created_at: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            created_at: true,
+            is_read: true
+          }
+        }
+      },
+      orderBy: { last_message_at: 'desc' }
+    };
+  }
+}
+
+// ================================
+// INITIALIZATION
+// ================================
+
+const dbRouter = new DatabaseRouter();
+
+const initializeDatabase = async () => {
   try {
-    logger.info('🔌 Disconnecting from database...');
-    await prisma.$disconnect();
-    logger.info('✅ Database disconnected successfully');
+    logger.info('🗃️  Initializing optimized database connections...');
+    
+    // Test write connection
+    await dbRouter.getWriteClient().$connect();
+    logger.info('✅ Write database connected');
+    
+    // Test read replicas
+    const healthCheck = await dbRouter.healthCheck();
+    logger.info('📊 Database health check:', healthCheck);
+    
+    // Set up connection monitoring
+    setInterval(async () => {
+      const health = await dbRouter.healthCheck();
+      if (!health.write) {
+        logger.error('🚨 Write database connection lost!');
+      }
+      
+      const unhealthyReplicas = health.readReplicas.filter(r => !r.healthy);
+      if (unhealthyReplicas.length > 0) {
+        logger.warn('⚠️  Some read replicas are unhealthy:', unhealthyReplicas);
+      }
+    }, 30000); // Check every 30 seconds
+    
+    logger.info('✅ Optimized database initialization complete');
+    
   } catch (error) {
-    logger.error('Database disconnect failed:', error);
+    logger.error('❌ Database initialization failed:', error);
     throw error;
   }
 };
 
-// Handle process termination
-process.on('SIGINT', gracefulShutdown);
-process.on('SIGTERM', gracefulShutdown);
-process.on('beforeExit', gracefulShutdown);
-
-// ================================
-// EXPORTS
-// ================================
+const disconnectDatabase = async () => {
+  await dbRouter.disconnect();
+};
 
 module.exports = {
-  prisma,
+  prisma: dbRouter.getWriteClient(),
+  dbRouter,
+  QueryOptimizer,
   initializeDatabase,
-  testConnection,
-  seedDatabase,
-  cleanupOldData,
-  analyzePerformance,
-  gracefulShutdown,
-  
-  // Individual seeding functions
-  seedCategories,
-  seedAdminUser,
-  seedSampleData,
-  
-  // Health check functions
-  runHealthChecks,
-  checkTableExists,
-  checkDatabaseStats
+  disconnectDatabase
 };

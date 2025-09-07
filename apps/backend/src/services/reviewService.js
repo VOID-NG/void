@@ -1,7 +1,7 @@
 // apps/backend/src/services/reviewService.js
 // Comprehensive review and rating system for Void Marketplace
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { BUSINESS_RULES } = require('../config/constants');
 const notificationService = require('./notificationService');

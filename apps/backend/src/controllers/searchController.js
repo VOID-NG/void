@@ -1,7 +1,7 @@
 // apps/backend/src/controllers/searchController.js
 // Complete search controller: text search, image search, autocomplete, filters
 
-const searchService = require('../services/searchService');
+const searchService = require('../services/searchService-original');
 const logger = require('../utils/logger');
 const { fuzzySearch } = require('../utils/fuzzySearchUtils');
 const { generateImageEmbedding } = require('../utils/imageEmbeddingUtils');

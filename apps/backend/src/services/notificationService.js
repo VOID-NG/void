@@ -1,7 +1,7 @@
 // apps/backend/src/services/notificationService.js
 // Complete notification service for VOID Marketplace
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const { NOTIFICATION_TYPE } = require('../config/constants');
 const logger = require('../utils/logger');
 const nodemailer = require('nodemailer');

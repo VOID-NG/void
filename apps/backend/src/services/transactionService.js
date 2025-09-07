@@ -1,7 +1,7 @@
 // apps/backend/src/services/transactionService.js
 // Comprehensive transaction and escrow management system
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { TRANSACTION_STATUS, BUSINESS_RULES } = require('../config/constants');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);

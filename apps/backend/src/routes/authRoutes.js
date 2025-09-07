@@ -225,7 +225,7 @@ router.patch('/admin/users/:id/verify-vendor',
   requireRole([USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]),
   async (req, res) => {
     try {
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
       const logger = require('../utils/logger');
       const { id: userId } = req.params;
       const { approved, reason } = req.body;
@@ -389,7 +389,7 @@ if (process.env.NODE_ENV === 'development') {
     try {
       const { email, username, role = 'USER' } = req.body;
       const bcrypt = require('bcryptjs');
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
 
       const hashedPassword = await bcrypt.hash('TestPassword123!', 12);
 

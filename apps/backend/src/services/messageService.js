@@ -1,7 +1,7 @@
 // apps/backend/src/services/messageService.js
 // Real-time message service with Socket.IO integration
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { createMessage } = require('./chatService');
 

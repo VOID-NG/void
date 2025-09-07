@@ -3,7 +3,7 @@
 
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const { USER_ROLES, USER_STATUS, ERROR_CODES } = require('../config/constants');
 const { generateTokenPair, generateEmailVerificationToken, generatePasswordResetToken, verifyPasswordResetToken } = require('../utils/tokenUtils');
 const logger = require('../utils/logger');

@@ -1,7 +1,7 @@
 // apps/backend/src/utils/fuzzySearchUtils.js
 // Advanced fuzzy search and text matching utilities
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('./logger');
 
 // ================================

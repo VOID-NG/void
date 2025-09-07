@@ -1,7 +1,7 @@
 // apps/backend/src/services/listingService.js
 // Complete Listing service layer for VOID Marketplace
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const { LISTING_STATUS, USER_ROLES, BUSINESS_RULES } = require('../config/constants');
 const { generateImageEmbedding } = require('../utils/imageEmbeddingUtils');
 const logger = require('../utils/logger');

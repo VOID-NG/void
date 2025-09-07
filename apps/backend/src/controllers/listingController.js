@@ -357,7 +357,7 @@ const removeListingMedia = asyncHandler(async (req, res) => {
     });
   }
 
-  const { prisma } = require('../config/db');
+  const { prisma } = require('../config/db-original');
   
   let deletedMedia = null;
   
@@ -425,7 +425,7 @@ const removeListingMedia = asyncHandler(async (req, res) => {
  * @access  Private
  */
 const toggleListingLike = asyncHandler(async (req, res) => {
-  const { prisma } = require('../config/db');
+  const { prisma } = require('../config/db-original');
   const listingId = req.params.id;
   const userId = req.user.id;
 
@@ -485,7 +485,7 @@ const toggleListingLike = asyncHandler(async (req, res) => {
  * @access  Private
  */
 const shareListing = asyncHandler(async (req, res) => {
-  const { prisma } = require('../config/db');
+  const { prisma } = require('../config/db-original');
   const { platform, method } = req.body; // e.g., 'social', 'email', 'copy_link'
 
   // Track share interaction
@@ -529,7 +529,7 @@ const getListingAnalytics = asyncHandler(async (req, res) => {
     });
   }
 
-  const { prisma } = require('../config/db');
+  const { prisma } = require('../config/db-original');
   
   // Get interaction statistics
   const interactions = await prisma.userInteraction.groupBy({

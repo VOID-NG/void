@@ -13,7 +13,7 @@ reviewRouter.get('/:listingId', async (req, res) => {
   try {
     const { listingId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const reviews = await prisma.review.findMany({
       where: { listing_id: listingId },
@@ -37,7 +37,7 @@ reviewRouter.get('/:listingId', async (req, res) => {
 reviewRouter.post('/', verifyToken, async (req, res) => {
   try {
     const { listing_id, rating, comment } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const review = await prisma.review.create({
       data: {
@@ -68,7 +68,7 @@ notificationRouter.use(verifyToken);
 notificationRouter.get('/', async (req, res) => {
   try {
     const { page = 1, limit = 20, unread_only = false } = req.query;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const whereClause = { user_id: req.user.id };
     if (unread_only === 'true') whereClause.read_at = null;
@@ -90,7 +90,7 @@ notificationRouter.get('/', async (req, res) => {
 notificationRouter.patch('/:notificationId/read', async (req, res) => {
   try {
     const { notificationId } = req.params;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     await prisma.notification.update({
       where: { id: notificationId, user_id: req.user.id },
@@ -113,7 +113,7 @@ const promotionRouter = express.Router();
 
 promotionRouter.get('/', async (req, res) => {
   try {
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
     
     const promotions = await prisma.promotion.findMany({
       where: {
@@ -134,7 +134,7 @@ promotionRouter.get('/', async (req, res) => {
 promotionRouter.post('/validate', async (req, res) => {
   try {
     const { code, listing_id } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const promotion = await prisma.promotion.findFirst({
       where: {
@@ -182,7 +182,7 @@ subscriptionRouter.get('/plans', async (req, res) => {
 
 subscriptionRouter.get('/current', async (req, res) => {
   try {
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
     
     const subscription = await prisma.subscription.findUnique({
       where: { user_id: req.user.id }
@@ -198,7 +198,7 @@ subscriptionRouter.get('/current', async (req, res) => {
 subscriptionRouter.post('/upgrade', async (req, res) => {
   try {
     const { plan } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     // TODO: Integrate with payment processor
     
@@ -228,7 +228,7 @@ adminRouter.use(requireMinRole('ADMIN'));
 // Dashboard stats
 adminRouter.get('/dashboard', async (req, res) => {
   try {
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
     
     const stats = await Promise.all([
       prisma.user.count(),
@@ -256,7 +256,7 @@ adminRouter.get('/dashboard', async (req, res) => {
 adminRouter.get('/users', async (req, res) => {
   try {
     const { page = 1, limit = 50, role, status } = req.query;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const whereClause = {};
     if (role) whereClause.role = role.toUpperCase();
@@ -292,7 +292,7 @@ adminRouter.patch('/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { status, role } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const updateData = {};
     if (status) updateData.status = status.toUpperCase();
@@ -325,7 +325,7 @@ adminRouter.patch('/users/:userId', async (req, res) => {
 adminRouter.get('/listings', async (req, res) => {
   try {
     const { page = 1, limit = 50, status = 'PENDING_APPROVAL' } = req.query;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const listings = await prisma.listing.findMany({
       where: { status: status.toUpperCase() },
@@ -355,7 +355,7 @@ adminRouter.patch('/listings/:listingId/status', async (req, res) => {
   try {
     const { listingId } = req.params;
     const { status, reason } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const listing = await prisma.listing.update({
       where: { id: listingId },

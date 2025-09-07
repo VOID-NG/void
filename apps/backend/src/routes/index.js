@@ -64,7 +64,7 @@ router.get('/', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
     
     // Test database connection
     await prisma.$queryRaw`SELECT 1`;
@@ -623,7 +623,7 @@ if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES ===
    */
   router.post('/dev/create-test-user', async (req, res) => {
     try {
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
       const bcrypt = require('bcryptjs');
 
       const { email, role = 'USER' } = req.body;

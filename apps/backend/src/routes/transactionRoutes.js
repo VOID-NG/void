@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
       status, 
       type = 'all' // 'buyer', 'seller', 'all'
     } = req.query;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     // Build where clause
     let whereClause = {};
@@ -131,7 +131,7 @@ router.post('/', async (req, res) => {
       payment_method = 'ESCROW',
       shipping_address 
     } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     // Validate listing
     const listing = await prisma.listing.findUnique({
@@ -257,7 +257,7 @@ router.post('/', async (req, res) => {
 router.get('/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const transaction = await prisma.transaction.findUnique({
       where: { id: transactionId },
@@ -333,7 +333,7 @@ router.patch('/:transactionId/status', async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { status, reason } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     const validStatuses = [
       'INITIATED', 'ESCROW_PENDING', 'ESCROW_ACTIVE', 
@@ -453,7 +453,7 @@ router.post('/:transactionId/dispute', async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { reason, description } = req.body;
-    const { prisma } = require('../config/db');
+    const { prisma } = require('../config/db-original');
 
     // Find transaction
     const transaction = await prisma.transaction.findUnique({
@@ -529,7 +529,7 @@ router.get('/admin/all',
         status, 
         disputed_only = false 
       } = req.query;
-      const { prisma } = require('../config/db');
+      const { prisma } = require('../config/db-original');
 
       let whereClause = {};
       if (status) whereClause.status = status.toUpperCase();

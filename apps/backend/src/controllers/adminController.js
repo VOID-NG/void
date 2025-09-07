@@ -2,7 +2,7 @@
 // Complete admin dashboard controller with Nigerian market insights
 // Handles user management, vendor verification, transaction monitoring, and analytics
 
-const { prisma } = require('../config/db');
+const { prisma } = require('../config/db-original');
 const logger = require('../utils/logger');
 const { formatNairaAmount, fromKobo } = require('../config/paymentConfig');
 const { emitToUser } = require('../utils/socketUtils');
