@@ -1,7 +1,7 @@
 // apps/backend/src/services/listingService.js
 // Complete Listing service layer for VOID Marketplace
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const { LISTING_STATUS, USER_ROLES, BUSINESS_RULES } = require('../config/constants');
 const { generateImageEmbedding } = require('../utils/imageEmbeddingUtils');
 const logger = require('../utils/logger');
@@ -81,7 +81,7 @@ const createListing = async (listingData, files = {}, userId) => {
     }
 
     // Check if category exists
-    const category = await prisma.category.findUnique({
+    const category = await dbRouter.category.findUnique({
       where: { id: category_id }
     });
 
@@ -90,7 +90,7 @@ const createListing = async (listingData, files = {}, userId) => {
     }
 
     // Create listing
-    const listing = await prisma.listing.create({
+    const listing = await dbRouter.listing.create({
       data: {
         title: title.trim(),
         description: description.trim(),
@@ -167,7 +167,7 @@ const processListingFiles = async (listingId, files) => {
         const image = images[i];
         const processedImage = await processAndSaveImage(image, listingId);
         
-        await prisma.listingImage.create({
+        await dbRouter.listingImage.create({
           data: {
             listing_id: listingId,
             url: processedImage.url,
@@ -194,7 +194,7 @@ const processListingFiles = async (listingId, files) => {
       for (const video of videos) {
         const processedVideo = await processAndSaveVideo(video, listingId);
         
-        await prisma.listingVideo.create({
+        await dbRouter.listingVideo.create({
           data: {
             listing_id: listingId,
             url: processedVideo.url,
@@ -215,7 +215,7 @@ const processListingFiles = async (listingId, files) => {
       for (const model of models_3d) {
         const processedModel = await processAndSave3DModel(model, listingId);
         
-        await prisma.listing3DModel.create({
+        await dbRouter.listing3DModel.create({
           data: {
             listing_id: listingId,
             url: processedModel.url,
@@ -405,7 +405,7 @@ const generateListingEmbeddings = async (listingId, textData) => {
     const embedding = await generateTextEmbedding(combinedText);
     
     if (embedding) {
-      await prisma.listingEmbedding.create({
+      await dbRouter.listingEmbedding.create({
         data: {
           listing_id: listingId,
           embedding_type: 'text',
@@ -434,7 +434,7 @@ const generateListingEmbeddings = async (listingId, textData) => {
  */
 const getListingById = async (listingId, userId = null) => {
   try {
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listingId },
       include: {
         category: true,
@@ -490,7 +490,7 @@ const getListingById = async (listingId, userId = null) => {
 
     // Increment view count if not the vendor
     if (userId && userId !== listing.vendor_id) {
-      await prisma.listing.update({
+      await dbRouter.listing.update({
         where: { id: listingId },
         data: { 
           views_count: { increment: 1 }
@@ -498,7 +498,7 @@ const getListingById = async (listingId, userId = null) => {
       });
 
       // Track user interaction
-      await prisma.userInteraction.create({
+      await dbRouter.userInteraction.create({
         data: {
           user_id: userId,
           listing_id: listingId,
@@ -612,7 +612,7 @@ const getListings = async (filters = {}, pagination = {}) => {
 
     // Get listings and total count
     const [listings, total] = await Promise.all([
-      prisma.listing.findMany({
+      dbRouter.listing.findMany({
         where,
         include: {
           category: {
@@ -641,7 +641,7 @@ const getListings = async (filters = {}, pagination = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.listing.count({ where })
+      dbRouter.listing.count({ where })
     ]);
 
     return {
@@ -674,7 +674,7 @@ const getListings = async (filters = {}, pagination = {}) => {
 const updateListing = async (listingId, updateData, userId) => {
   try {
     // Get existing listing
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listingId }
     });
 
@@ -713,7 +713,7 @@ const updateListing = async (listingId, updateData, userId) => {
     }
 
     // Update listing
-    const updatedListing = await prisma.listing.update({
+    const updatedListing = await dbRouter.listing.update({
       where: { id: listingId },
       data: {
         ...filteredData,
@@ -766,7 +766,7 @@ const updateListing = async (listingId, updateData, userId) => {
  */
 const updateListingStatus = async (listingId, status, userId, userRole) => {
   try {
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listingId }
     });
 
@@ -797,7 +797,7 @@ const updateListingStatus = async (listingId, status, userId, userRole) => {
     }
 
     // Update status
-    const updatedListing = await prisma.listing.update({
+    const updatedListing = await dbRouter.listing.update({
       where: { id: listingId },
       data: {
         status,
@@ -831,7 +831,7 @@ const updateListingStatus = async (listingId, status, userId, userRole) => {
  */
 const deleteListing = async (listingId, userId, userRole) => {
   try {
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listingId }
     });
 
@@ -848,7 +848,7 @@ const deleteListing = async (listingId, userId, userRole) => {
     }
 
     // Soft delete by updating status
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: listingId },
       data: {
         status: LISTING_STATUS.REMOVED,

@@ -682,7 +682,7 @@ class RealTimeManager extends EventEmitter {
       if (cached) return cached;
       
       // Fallback to database if not cached
-      const { dbRouter } = require('../config/db-optimized');
+      const { dbRouter } = require('../config/db');
       const client = dbRouter.getReadClient();
       
       const chats = await client.chat.findMany({

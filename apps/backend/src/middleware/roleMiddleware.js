@@ -236,7 +236,7 @@ const requireOwnerOrAdmin = (resourceParam = 'id', ownerField = 'user_id', model
     } else {
       // Check ownership in database
       try {
-        const { prisma } = require('../config/db-original');
+        const { dbRouter, QueryOptimizer } = require('../config/db');
         const resource = await prisma[modelName].findUnique({
           where: { id: resourceId },
           select: { [ownerField]: true }

@@ -55,7 +55,7 @@ const createOptimizedPrismaClient = () => {
   // QUERY PERFORMANCE MONITORING
   // ================================
   
-  prisma.$on('query', (e) => {
+  dbRouter.$on('query', (e) => {
     const duration = e.duration;
     
     // Log slow queries for optimization
@@ -78,7 +78,7 @@ const createOptimizedPrismaClient = () => {
     }
   });
 
-  prisma.$on('error', (e) => {
+  dbRouter.$on('error', (e) => {
     logger.error('DATABASE ERROR', {
       message: e.message,
       target: e.target,

@@ -1,7 +1,7 @@
 // apps/backend/src/services/transactionService.js
 // Comprehensive transaction and escrow management system
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { TRANSACTION_STATUS, BUSINESS_RULES } = require('../config/constants');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -29,7 +29,7 @@ const createTransaction = async (transactionData) => {
     } = transactionData;
 
     // Validate listing exists and is available
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listing_id },
       include: { vendor: true }
     });
@@ -63,7 +63,7 @@ const createTransaction = async (transactionData) => {
     const vendorAmount = finalAmount - platformFee;
 
     // Create transaction record
-    const transaction = await prisma.transaction.create({
+    const transaction = await dbRouter.transaction.create({
       data: {
         listing_id,
         buyer_id,
@@ -127,7 +127,7 @@ const processPayment = async (transactionId, paymentData) => {
     const { payment_method_id, billing_address } = paymentData;
 
     // Get transaction details
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         listing: true,
@@ -164,7 +164,7 @@ const processPayment = async (transactionId, paymentData) => {
     });
 
     // Update transaction with payment details
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.ESCROW,
@@ -178,7 +178,7 @@ const processPayment = async (transactionId, paymentData) => {
     });
 
     // Update listing status to sold
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: transaction.listing_id },
       data: { status: 'SOLD' }
     });
@@ -208,7 +208,7 @@ const processPayment = async (transactionId, paymentData) => {
     
     // Update transaction status to failed
     if (transactionId) {
-      await prisma.transaction.update({
+      await dbRouter.transaction.update({
         where: { id: transactionId },
         data: { status: TRANSACTION_STATUS.FAILED }
       }).catch(() => {}); // Ignore if update fails
@@ -229,7 +229,7 @@ const releaseEscrow = async (transactionId, options = {}) => {
     const { released_by = 'system', release_reason = 'automatic' } = options;
 
     // Get transaction details
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         listing: true,
@@ -250,7 +250,7 @@ const releaseEscrow = async (transactionId, options = {}) => {
     const transferResult = await transferFundsToVendor(transaction);
 
     // Update transaction status
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.COMPLETED,
@@ -294,7 +294,7 @@ const getTransactionsPendingRelease = async () => {
   try {
     const now = new Date();
 
-    const transactions = await prisma.transaction.findMany({
+    const transactions = await dbRouter.transaction.findMany({
       where: {
         status: TRANSACTION_STATUS.ESCROW,
         escrow_release_date: { lte: now }
@@ -423,7 +423,7 @@ const transferFundsToVendor = async (transaction) => {
  */
 const validateAndApplyPromotion = async (promotionCode, amount, userId) => {
   try {
-    const promotion = await prisma.promotion.findFirst({
+    const promotion = await dbRouter.promotion.findFirst({
       where: {
         code: promotionCode.toUpperCase(),
         is_active: true,
@@ -448,7 +448,7 @@ const validateAndApplyPromotion = async (promotionCode, amount, userId) => {
 
     // Check user usage (if applicable)
     if (promotion.user_limit) {
-      const userUsage = await prisma.transaction.count({
+      const userUsage = await dbRouter.transaction.count({
         where: {
           buyer_id: userId,
           promotion_code: promotionCode,
@@ -462,7 +462,7 @@ const validateAndApplyPromotion = async (promotionCode, amount, userId) => {
     }
 
     // Update usage count
-    await prisma.promotion.update({
+    await dbRouter.promotion.update({
       where: { id: promotion.id },
       data: { usage_count: { increment: 1 } }
     });
@@ -528,7 +528,7 @@ const createReviewOpportunity = async (transaction) => {
     ];
 
     for (const review of reviewData) {
-      await prisma.reviewOpportunity.upsert({
+      await dbRouter.reviewOpportunity.upsert({
         where: {
           transaction_id_reviewer_id: {
             transaction_id: review.transaction_id,
@@ -587,21 +587,21 @@ const getTransactionAnalytics = async (options = {}) => {
       averageOrderValue,
       topVendors
     ] = await Promise.all([
-      prisma.transaction.count({ where: whereClause }),
-      prisma.transaction.aggregate({
+      dbRouter.transaction.count({ where: whereClause }),
+      dbRouter.transaction.aggregate({
         where: whereClause,
         _sum: { amount: true }
       }),
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['status'],
         where: whereClause,
         _count: { status: true }
       }),
-      prisma.transaction.aggregate({
+      dbRouter.transaction.aggregate({
         where: { ...whereClause, status: TRANSACTION_STATUS.COMPLETED },
         _avg: { amount: true }
       }),
-      vendor_id ? [] : prisma.transaction.groupBy({
+      vendor_id ? [] : dbRouter.transaction.groupBy({
         by: ['vendor_id'],
         where: { ...whereClause, status: TRANSACTION_STATUS.COMPLETED },
         _count: { vendor_id: true },
@@ -654,7 +654,7 @@ const updateShippingInfo = async (transactionId, shippingData, userId) => {
       shipping_notes
     } = shippingData;
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId }
     });
 
@@ -671,7 +671,7 @@ const updateShippingInfo = async (transactionId, shippingData, userId) => {
       throw new Error('Cannot update shipping for transaction in current status');
     }
 
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         tracking_number,
@@ -729,7 +729,7 @@ const confirmDelivery = async (transactionId, userId, confirmationData = {}) => 
   try {
     const { delivery_notes, delivery_rating } = confirmationData;
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true, vendor: true }
     });
@@ -748,7 +748,7 @@ const confirmDelivery = async (transactionId, userId, confirmationData = {}) => 
     }
 
     // Update transaction
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.DELIVERED,
@@ -810,7 +810,7 @@ const processRefund = async (transactionId, refundData, processedBy) => {
       admin_notes
     } = refundData;
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true, buyer: true, vendor: true }
     });
@@ -846,7 +846,7 @@ const processRefund = async (transactionId, refundData, processedBy) => {
     }
 
     // Update transaction status
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.REFUNDED,
@@ -862,7 +862,7 @@ const processRefund = async (transactionId, refundData, processedBy) => {
 
     // Update listing status back to active if full refund
     if (refund_type === 'full') {
-      await prisma.listing.update({
+      await dbRouter.listing.update({
         where: { id: transaction.listing_id },
         data: { status: 'ACTIVE' }
       });
@@ -935,7 +935,7 @@ const initiateReturn = async (transactionId, returnData, userId) => {
       evidence_urls = []
     } = returnData;
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true, vendor: true }
     });
@@ -960,7 +960,7 @@ const initiateReturn = async (transactionId, returnData, userId) => {
     }
 
     // Create return request
-    const returnRequest = await prisma.returnRequest.create({
+    const returnRequest = await dbRouter.returnRequest.create({
       data: {
         transaction_id: transactionId,
         requested_by: userId,
@@ -972,7 +972,7 @@ const initiateReturn = async (transactionId, returnData, userId) => {
       }
     }).catch(() => {
       // If table doesn't exist, update transaction with return info
-      return prisma.transaction.update({
+      return dbRouter.transaction.update({
         where: { id: transactionId },
         data: {
           status: TRANSACTION_STATUS.RETURN_REQUESTED,
@@ -1057,7 +1057,7 @@ const generateTransactionReport = async (filters = {}) => {
       refundStats
     ] = await Promise.all([
       // Transaction list (if details requested)
-      include_details ? prisma.transaction.findMany({
+      include_details ? dbRouter.transaction.findMany({
         where: whereClause,
         include: {
           listing: {
@@ -1075,7 +1075,7 @@ const generateTransactionReport = async (filters = {}) => {
       }) : [],
 
       // Summary statistics
-      prisma.transaction.aggregate({
+      dbRouter.transaction.aggregate({
         where: whereClause,
         _count: { id: true },
         _sum: { amount: true, platform_fee: true, vendor_amount: true },
@@ -1083,7 +1083,7 @@ const generateTransactionReport = async (filters = {}) => {
       }),
 
       // Status breakdown
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['status'],
         where: whereClause,
         _count: { status: true },
@@ -1091,7 +1091,7 @@ const generateTransactionReport = async (filters = {}) => {
       }),
 
       // Daily volume
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['created_at'],
         where: whereClause,
         _count: { id: true },
@@ -1099,7 +1099,7 @@ const generateTransactionReport = async (filters = {}) => {
       }),
 
       // Top vendors (if not filtered by vendor)
-      !vendor_id ? prisma.transaction.groupBy({
+      !vendor_id ? dbRouter.transaction.groupBy({
         by: ['vendor_id'],
         where: whereClause,
         _count: { vendor_id: true },
@@ -1109,7 +1109,7 @@ const generateTransactionReport = async (filters = {}) => {
       }) : [],
 
       // Refund statistics
-      prisma.transaction.aggregate({
+      dbRouter.transaction.aggregate({
         where: {
           ...whereClause,
           status: TRANSACTION_STATUS.REFUNDED
@@ -1243,7 +1243,7 @@ const handlePaymentSucceeded = async (paymentIntent) => {
       return { handled: false };
     }
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true, buyer: true, vendor: true }
     });
@@ -1257,7 +1257,7 @@ const handlePaymentSucceeded = async (paymentIntent) => {
     }
 
     // Update transaction status
-    await prisma.transaction.update({
+    await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.ESCROW,
@@ -1312,7 +1312,7 @@ const handlePaymentFailed = async (paymentIntent) => {
       return { handled: false };
     }
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true, buyer: true }
     });
@@ -1322,7 +1322,7 @@ const handlePaymentFailed = async (paymentIntent) => {
     }
 
     // Update transaction status
-    await prisma.transaction.update({
+    await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.FAILED,
@@ -1332,7 +1332,7 @@ const handlePaymentFailed = async (paymentIntent) => {
     });
 
     // Restore listing availability
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: transaction.listing_id },
       data: { status: 'ACTIVE' }
     });
@@ -1426,7 +1426,7 @@ const initiateDispute = async (transactionId, disputeData) => {
     } = disputeData;
 
     // Get transaction details
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         listing: true,
@@ -1444,7 +1444,7 @@ const initiateDispute = async (transactionId, disputeData) => {
     }
 
     // Create dispute record
-    const dispute = await prisma.dispute.create({
+    const dispute = await dbRouter.dispute.create({
       data: {
         transaction_id: transactionId,
         initiated_by,
@@ -1455,7 +1455,7 @@ const initiateDispute = async (transactionId, disputeData) => {
       }
     }).catch(() => {
       // If table doesn't exist, update transaction with dispute info
-      return prisma.transaction.update({
+      return dbRouter.transaction.update({
         where: { id: transactionId },
         data: {
           status: TRANSACTION_STATUS.DISPUTED,
@@ -1468,7 +1468,7 @@ const initiateDispute = async (transactionId, disputeData) => {
     });
 
     // Update transaction status
-    await prisma.transaction.update({
+    await dbRouter.transaction.update({
       where: { id: transactionId },
       data: { status: TRANSACTION_STATUS.DISPUTED }
     });
@@ -1514,7 +1514,7 @@ const initiateDispute = async (transactionId, disputeData) => {
  */
 const getTransaction = async (transactionId, userId) => {
   try {
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         listing: {
@@ -1598,7 +1598,7 @@ const getUserTransactions = async (userId, options = {}) => {
     }
 
     const [transactions, totalCount] = await Promise.all([
-      prisma.transaction.findMany({
+      dbRouter.transaction.findMany({
         where: whereClause,
         include: {
           listing: {
@@ -1623,7 +1623,7 @@ const getUserTransactions = async (userId, options = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.transaction.count({ where: whereClause })
+      dbRouter.transaction.count({ where: whereClause })
     ]);
 
     return {
@@ -1651,7 +1651,7 @@ const getUserTransactions = async (userId, options = {}) => {
  */
 const cancelTransaction = async (transactionId, userId, reason) => {
   try {
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true }
     });
@@ -1669,7 +1669,7 @@ const cancelTransaction = async (transactionId, userId, reason) => {
     }
 
     // Update transaction status
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: TRANSACTION_STATUS.CANCELLED,
@@ -1680,7 +1680,7 @@ const cancelTransaction = async (transactionId, userId, reason) => {
     });
 
     // Update listing status back to active
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: transaction.listing_id },
       data: { status: 'ACTIVE' }
     });

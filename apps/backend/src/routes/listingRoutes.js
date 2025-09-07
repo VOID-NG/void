@@ -292,7 +292,7 @@ router.post('/admin/bulk-update',
   async (req, res) => {
     try {
       const { listing_ids, action, reason } = req.body;
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
       const logger = require('../utils/logger');
       
       let updateData = {};
@@ -317,7 +317,7 @@ router.post('/admin/bulk-update',
           break;
         case 'delete':
           // For delete, we'll handle it separately
-          await prisma.listing.deleteMany({
+          await dbRouter.listing.deleteMany({
             where: { id: { in: listing_ids } }
           });
           successMessage = 'Listings deleted successfully';
@@ -331,14 +331,14 @@ router.post('/admin/bulk-update',
       }
 
       if (action !== 'delete') {
-        await prisma.listing.updateMany({
+        await dbRouter.listing.updateMany({
           where: { id: { in: listing_ids } },
           data: updateData
         });
       }
 
       // Log admin action
-      await prisma.adminAction.create({
+      await dbRouter.adminAction.create({
         data: {
           admin_id: req.user.id,
           action_type: `bulk_${action}_listings`,
@@ -395,7 +395,7 @@ router.get('/admin/stats',
   requireMinRole(USER_ROLES.ADMIN),
   async (req, res) => {
     try {
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
       
       const [
         totalListings,
@@ -406,24 +406,24 @@ router.get('/admin/stats',
         listingsByCategory,
         recentListings
       ] = await Promise.all([
-        prisma.listing.count(),
-        prisma.listing.count({ where: { status: 'ACTIVE' } }),
-        prisma.listing.count({ where: { status: 'PENDING_APPROVAL' } }),
-        prisma.listing.count({ where: { is_featured: true } }),
+        dbRouter.listing.count(),
+        dbRouter.listing.count({ where: { status: 'ACTIVE' } }),
+        dbRouter.listing.count({ where: { status: 'PENDING_APPROVAL' } }),
+        dbRouter.listing.count({ where: { is_featured: true } }),
         
-        prisma.listing.groupBy({
+        dbRouter.listing.groupBy({
           by: ['status'],
           _count: { status: true }
         }),
         
-        prisma.listing.groupBy({
+        dbRouter.listing.groupBy({
           by: ['category_id'],
           _count: { category_id: true },
           orderBy: { _count: { category_id: 'desc' } },
           take: 10
         }),
         
-        prisma.listing.count({
+        dbRouter.listing.count({
           where: {
             created_at: {
               gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days

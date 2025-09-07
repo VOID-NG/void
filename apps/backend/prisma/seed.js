@@ -43,7 +43,7 @@ async function main() {
 
     // Use upsert to avoid duplicates
     for (const suggestion of searchSuggestions) {
-      await prisma.searchSuggestion.upsert({
+      await dbRouter.searchSuggestion.upsert({
         where: {
           suggestion_text: suggestion.suggestion_text
         },
@@ -135,7 +135,7 @@ async function main() {
     ];
 
     for (const category of categories) {
-      await prisma.category.upsert({
+      await dbRouter.category.upsert({
         where: { id: category.id },
         update: {},
         create: category
@@ -276,7 +276,7 @@ async function main() {
     ];
 
     for (const user of users) {
-      await prisma.user.upsert({
+      await dbRouter.user.upsert({
         where: { email: user.email },
         update: {},
         create: user
@@ -462,7 +462,7 @@ async function main() {
     ];
 
     for (const listing of listings) {
-      await prisma.listing.upsert({
+      await dbRouter.listing.upsert({
         where: { id: listing.id },
         update: {},
         create: listing
@@ -476,7 +476,7 @@ async function main() {
     // ================================
     console.log('💬 Creating sample chats and messages...');
 
-    const chat1 = await prisma.chat.upsert({
+    const chat1 = await dbRouter.chat.upsert({
       where: { id: 'chat_iphone_inquiry' },
       update: {},
       create: {
@@ -514,7 +514,7 @@ async function main() {
     ];
 
     for (const message of messages) {
-      await prisma.message.create({
+      await dbRouter.message.create({
         data: message
       });
     }
@@ -546,7 +546,7 @@ async function main() {
     ];
 
     for (const review of reviews) {
-      await prisma.review.create({
+      await dbRouter.review.create({
         data: review
       });
     }
@@ -587,23 +587,23 @@ async function main() {
     ];
 
     for (const interaction of interactions) {
-      await prisma.userInteraction.create({
+      await dbRouter.userInteraction.create({
         data: interaction
       });
     }
 
     // Update listing stats
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: 'listing_iphone_15' },
       data: { views_count: 15, likes_count: 3 }
     });
 
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: 'listing_macbook_air' },
       data: { views_count: 8, likes_count: 1 }
     });
 
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: 'listing_gaming_pc' },
       data: { views_count: 12, likes_count: 2 }
     });
@@ -640,7 +640,7 @@ async function main() {
     ];
 
     for (const notification of notifications) {
-      await prisma.notification.create({
+      await dbRouter.notification.create({
         data: notification
       });
     }
@@ -662,7 +662,7 @@ async function main() {
       current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days from now
     };
 
-    await prisma.subscription.upsert({
+    await dbRouter.subscription.upsert({
       where: { user_id: subscription.user_id },
       update: {},
       create: subscription
@@ -689,7 +689,7 @@ async function main() {
       is_active: true
     };
 
-    await prisma.promotion.upsert({
+    await dbRouter.promotion.upsert({
       where: { code: promotion.code },
       update: {},
       create: promotion
@@ -730,5 +730,5 @@ main()
     process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await dbRouter.$disconnect();
   });

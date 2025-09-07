@@ -1,7 +1,7 @@
 // apps/backend/src/services/notificationService.js
 // Complete notification service for VOID Marketplace
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const { NOTIFICATION_TYPE } = require('../config/constants');
 const logger = require('../utils/logger');
 const nodemailer = require('nodemailer');
@@ -89,7 +89,7 @@ const createNotification = async (notificationData) => {
     }
 
     // Get user preferences
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: user_id },
       select: {
         email: true,
@@ -109,7 +109,7 @@ const createNotification = async (notificationData) => {
     const shouldSendSms = send_sms && (preferences.sms !== false);
 
     // Create notification record
-    const notification = await prisma.notification.create({
+    const notification = await dbRouter.notification.create({
       data: {
         user_id,
         type,
@@ -171,7 +171,7 @@ const createNotification = async (notificationData) => {
     }
 
     // Update notification with delivery status
-    await prisma.notification.update({
+    await dbRouter.notification.update({
       where: { id: notification.id },
       data: {
         delivery_status: JSON.stringify(deliveryResults),
@@ -239,14 +239,14 @@ const getUserNotifications = async (userId, options = {}) => {
 
     // Get notifications and total count
     const [notifications, total, unreadCount] = await Promise.all([
-      prisma.notification.findMany({
+      dbRouter.notification.findMany({
         where,
         orderBy: { created_at: 'desc' },
         skip: offset,
         take: limit
       }),
-      prisma.notification.count({ where }),
-      prisma.notification.count({
+      dbRouter.notification.count({ where }),
+      dbRouter.notification.count({
         where: {
           user_id: userId,
           is_read: false
@@ -281,7 +281,7 @@ const getUserNotifications = async (userId, options = {}) => {
  */
 const getUnreadCount = async (userId) => {
   try {
-    const count = await prisma.notification.count({
+    const count = await dbRouter.notification.count({
       where: {
         user_id: userId,
         is_read: false
@@ -303,7 +303,7 @@ const getUnreadCount = async (userId) => {
  */
 const markAsRead = async (notificationId, userId) => {
   try {
-    const notification = await prisma.notification.findFirst({
+    const notification = await dbRouter.notification.findFirst({
       where: {
         id: notificationId,
         user_id: userId
@@ -318,7 +318,7 @@ const markAsRead = async (notificationId, userId) => {
       return notification; // Already read
     }
 
-    const updatedNotification = await prisma.notification.update({
+    const updatedNotification = await dbRouter.notification.update({
       where: { id: notificationId },
       data: {
         is_read: true,
@@ -357,7 +357,7 @@ const markAllAsRead = async (userId, filters = {}) => {
       where.type = filters.type;
     }
 
-    const result = await prisma.notification.updateMany({
+    const result = await dbRouter.notification.updateMany({
       where,
       data: {
         is_read: true,
@@ -386,7 +386,7 @@ const markAllAsRead = async (userId, filters = {}) => {
  */
 const deleteNotification = async (notificationId, userId) => {
   try {
-    const notification = await prisma.notification.findFirst({
+    const notification = await dbRouter.notification.findFirst({
       where: {
         id: notificationId,
         user_id: userId
@@ -397,7 +397,7 @@ const deleteNotification = async (notificationId, userId) => {
       throw new NotFoundError('Notification not found');
     }
 
-    await prisma.notification.delete({
+    await dbRouter.notification.delete({
       where: { id: notificationId }
     });
 
@@ -437,7 +437,7 @@ const deleteAllNotifications = async (userId, filters = {}) => {
       where.created_at = { lt: cutoffDate };
     }
 
-    const result = await prisma.notification.deleteMany({
+    const result = await dbRouter.notification.deleteMany({
       where
     });
 
@@ -878,7 +878,7 @@ const getActionButton = (type, metadata, baseUrl) => {
  */
 const getNotificationPreferences = async (userId) => {
   try {
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId },
       select: {
         notification_preferences: true
@@ -922,7 +922,7 @@ const getNotificationPreferences = async (userId) => {
  */
 const updateNotificationPreferences = async (userId, preferences) => {
   try {
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: {
         notification_preferences: preferences

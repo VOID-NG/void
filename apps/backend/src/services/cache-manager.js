@@ -495,7 +495,7 @@ class EnterpriseCache extends EventEmitter {
   }
 
   async warmPopularListings() {
-    const { dbRouter } = require('../config/db-optimized');
+    const { dbRouter } = require('../config/db');
     const client = dbRouter.getReadClient();
     
     try {

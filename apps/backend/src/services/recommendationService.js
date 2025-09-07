@@ -1,7 +1,7 @@
 // apps/backend/src/services/recommendationService.js
 // Advanced AI-powered recommendation engine for Void Marketplace
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { AI_CONFIG, BUSINESS_RULES } = require('../config/constants');
 
@@ -102,7 +102,7 @@ const getTrendingRecommendations = async (options = {}) => {
       whereClause.category_id = category;
     }
 
-    const trending = await prisma.listing.findMany({
+    const trending = await dbRouter.listing.findMany({
       where: whereClause,
       include: {
         vendor: {
@@ -170,7 +170,7 @@ const getSimilarRecommendations = async (listingId, options = {}) => {
     const { limit = 10, userId = null } = options;
 
     // Get the reference listing
-    const referenceListing = await prisma.listing.findUnique({
+    const referenceListing = await dbRouter.listing.findUnique({
       where: { id: listingId },
       include: {
         category: true,
@@ -183,7 +183,7 @@ const getSimilarRecommendations = async (listingId, options = {}) => {
     }
 
     // Find similar listings
-    const similarListings = await prisma.listing.findMany({
+    const similarListings = await dbRouter.listing.findMany({
       where: {
         id: { not: listingId },
         status: 'ACTIVE',
@@ -281,7 +281,7 @@ const getCollaborativeRecommendations = async (userId, userProfile, limit) => {
     }
 
     // Get listings liked/interacted with by similar users
-    const recommendations = await prisma.listing.findMany({
+    const recommendations = await dbRouter.listing.findMany({
       where: {
         status: 'ACTIVE',
         vendor_id: { not: userId },
@@ -337,7 +337,7 @@ const getContentBasedRecommendations = async (userId, userProfile, limit) => {
     const preferredCategories = userProfile.preferredCategories || [];
     const priceRange = userProfile.averagePriceRange || { min: 0, max: 999999 };
 
-    const recommendations = await prisma.listing.findMany({
+    const recommendations = await dbRouter.listing.findMany({
       where: {
         status: 'ACTIVE',
         vendor_id: { not: userId },
@@ -476,7 +476,7 @@ const getHybridRecommendations = async (userId, userProfile, limit) => {
 const getUserProfile = async (userId) => {
   try {
     // Get user's interaction history
-    const interactions = await prisma.userInteraction.findMany({
+    const interactions = await dbRouter.userInteraction.findMany({
       where: { user_id: userId },
       include: {
         listing: {
@@ -541,7 +541,7 @@ const findSimilarUsers = async (userId, userProfile) => {
       return [];
     }
 
-    const similarUsers = await prisma.user.findMany({
+    const similarUsers = await dbRouter.user.findMany({
       where: {
         id: { not: userId },
         interactions: {
@@ -588,7 +588,7 @@ const findSimilarUsers = async (userId, userProfile) => {
  */
 const filterViewedListings = async (userId, recommendations) => {
   try {
-    const viewedListings = await prisma.userInteraction.findMany({
+    const viewedListings = await dbRouter.userInteraction.findMany({
       where: {
         user_id: userId,
         interaction_type: 'VIEW'
@@ -650,7 +650,7 @@ const generateRecommendationReason = (recommendation, userProfile) => {
  */
 const getFallbackRecommendations = async (limit) => {
   try {
-    const fallback = await prisma.listing.findMany({
+    const fallback = await dbRouter.listing.findMany({
       where: { status: 'ACTIVE' },
       include: {
         vendor: {

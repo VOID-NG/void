@@ -3,7 +3,7 @@
 
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const { USER_ROLES, USER_STATUS, ERROR_CODES } = require('../config/constants');
 const { generateTokenPair, generateEmailVerificationToken, generatePasswordResetToken, verifyPasswordResetToken } = require('../utils/tokenUtils');
 const logger = require('../utils/logger');
@@ -85,7 +85,7 @@ const registerUser = async (userData) => {
     }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findFirst({
+    const existingUser = await dbRouter.user.findFirst({
       where: {
         OR: [
           { email: email.toLowerCase() },
@@ -104,7 +104,7 @@ const registerUser = async (userData) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     // Create user
-    const user = await prisma.user.create({
+    const user = await dbRouter.user.create({
       data: {
         email: email.toLowerCase(),
         username: username.toLowerCase(),
@@ -178,7 +178,7 @@ const loginUser = async (identifier, password, userAgent, ipAddress) => {
     }
 
     // Find user by email or username
-    const user = await prisma.user.findFirst({
+    const user = await dbRouter.user.findFirst({
       where: {
         OR: [
           { email: identifier.toLowerCase() },
@@ -203,7 +203,7 @@ const loginUser = async (identifier, password, userAgent, ipAddress) => {
     }
 
     // Update last login
-    await prisma.user.update({
+    await dbRouter.user.update({
       where: { id: user.id },
       data: { last_login: new Date() }
     });
@@ -254,7 +254,7 @@ const refreshAccessToken = async (refreshToken) => {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     
     // Get user
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: decoded.userId },
       select: {
         id: true,
@@ -311,7 +311,7 @@ const verifyEmail = async (token) => {
     }
 
     // Get user
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: decoded.userId }
     });
 
@@ -324,7 +324,7 @@ const verifyEmail = async (token) => {
     }
 
     // Update user status
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: user.id },
       data: {
         is_verified: true,
@@ -362,7 +362,7 @@ const verifyEmail = async (token) => {
 const resendEmailVerification = async (userId) => {
   try {
     // Get user
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId }
     });
 
@@ -397,7 +397,7 @@ const resendEmailVerification = async (userId) => {
 const requestPasswordReset = async (email) => {
   try {
     // Find user by email
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { email: email.toLowerCase() }
     });
 
@@ -444,7 +444,7 @@ const resetPassword = async (token, newPassword) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // Get user
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: decoded.userId }
     });
 
@@ -457,7 +457,7 @@ const resetPassword = async (token, newPassword) => {
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
     // Update password
-    await prisma.user.update({
+    await dbRouter.user.update({
       where: { id: user.id },
       data: {
         password_hash: hashedPassword,
@@ -492,7 +492,7 @@ const changePassword = async (userId, currentPassword, newPassword) => {
     }
 
     // Get user
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId }
     });
 
@@ -511,7 +511,7 @@ const changePassword = async (userId, currentPassword, newPassword) => {
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
     // Update password
-    await prisma.user.update({
+    await dbRouter.user.update({
       where: { id: userId },
       data: {
         password_hash: hashedPassword,
@@ -538,7 +538,7 @@ const changePassword = async (userId, currentPassword, newPassword) => {
  */
 const getUserProfile = async (userId) => {
   try {
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -604,7 +604,7 @@ const updateUserProfile = async (userId, updateData) => {
     }
 
     // Update user
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: {
         ...filteredData,
@@ -647,7 +647,7 @@ const updateUserProfile = async (userId, updateData) => {
  */
 const updateUserAvatar = async (userId, avatarUrl) => {
   try {
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: {
         avatar_url: avatarUrl,
@@ -680,7 +680,7 @@ const updateUserAvatar = async (userId, avatarUrl) => {
  */
 const requestVendorVerification = async (userId, verificationData) => {
   try {
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId }
     });
 
@@ -697,7 +697,7 @@ const requestVendorVerification = async (userId, verificationData) => {
     }
 
     // Update user with verification request
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: {
         status: USER_STATUS.PENDING_VERIFICATION,

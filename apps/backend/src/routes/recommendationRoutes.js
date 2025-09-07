@@ -142,8 +142,8 @@ router.get('/similar/:listingId', optionalAuth, async (req, res) => {
     const { limit = 10 } = req.query;
 
     // Get the target listing
-    const { prisma } = require('../config/db');
-    const targetListing = await prisma.listing.findUnique({
+    const { dbRouter, QueryOptimizer } = require('../config/db');
+    const targetListing = await dbRouter.listing.findUnique({
       where: { id: listingId }
     });
 

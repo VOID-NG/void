@@ -1,7 +1,7 @@
 // apps/backend/src/services/messageService.js
 // Real-time message service with Socket.IO integration
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { createMessage } = require('./chatService');
 
@@ -23,7 +23,7 @@ const sendMessageRealtime = async (messageData, io) => {
     const newMessage = await createMessage(messageData);
 
     // Get chat details for context
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       include: {
         listing: {
@@ -134,7 +134,7 @@ const handleTypingIndicator = (chatId, userId, isTyping, io) => {
 const markMessagesAsRead = async (chatId, userId, messageIds, io) => {
   try {
     // Update messages as read
-    const updateResult = await prisma.message.updateMany({
+    const updateResult = await dbRouter.message.updateMany({
       where: {
         id: { in: messageIds },
         chat_id: chatId,
@@ -192,7 +192,7 @@ const createOfferMessage = async (offerData, io) => {
     } = offerData;
 
     // Get chat and listing details
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       include: {
         listing: {
@@ -290,7 +290,7 @@ const handleOfferResponse = async (responseData, io) => {
     }
 
     // Get original offer message
-    const offerMessage = await prisma.message.findUnique({
+    const offerMessage = await dbRouter.message.findUnique({
       where: { id: messageId },
       include: {
         chat: {
@@ -427,7 +427,7 @@ const getMessagePreview = (message) => {
  */
 const getUnreadMessageCount = async (userId) => {
   try {
-    const unreadCount = await prisma.message.count({
+    const unreadCount = await dbRouter.message.count({
       where: {
         sender_id: { not: userId },
         is_read: false,
@@ -479,7 +479,7 @@ const searchMessages = async (userId, searchQuery, options = {}) => {
       whereClause.chat_id = chatId;
     }
 
-    const messages = await prisma.message.findMany({
+    const messages = await dbRouter.message.findMany({
       where: whereClause,
       include: {
         sender: {

@@ -508,7 +508,7 @@ class JobProcessor {
     const { userId, event, metadata } = data;
     
     try {
-      const { dbRouter } = require('../config/db-optimized');
+      const { dbRouter } = require('../config/db');
       const client = dbRouter.getWriteClient();
 
       // Record user interaction

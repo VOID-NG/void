@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
       status, 
       type = 'all' // 'buyer', 'seller', 'all'
     } = req.query;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     // Build where clause
     let whereClause = {};
@@ -52,7 +52,7 @@ router.get('/', async (req, res) => {
     }
 
     // Get transactions
-    const transactions = await prisma.transaction.findMany({
+    const transactions = await dbRouter.transaction.findMany({
       where: whereClause,
       include: {
         buyer: {
@@ -90,7 +90,7 @@ router.get('/', async (req, res) => {
     });
 
     // Get total count
-    const totalCount = await prisma.transaction.count({
+    const totalCount = await dbRouter.transaction.count({
       where: whereClause
     });
 
@@ -131,10 +131,10 @@ router.post('/', async (req, res) => {
       payment_method = 'ESCROW',
       shipping_address 
     } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     // Validate listing
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listing_id },
       include: { vendor: true }
     });
@@ -171,7 +171,7 @@ router.post('/', async (req, res) => {
     const vendorAmount = Math.round((totalAmount - platformFee) * 100) / 100;
 
     // Create transaction
-    const transaction = await prisma.transaction.create({
+    const transaction = await dbRouter.transaction.create({
       data: {
         listing_id,
         buyer_id: req.user.id,
@@ -257,9 +257,9 @@ router.post('/', async (req, res) => {
 router.get('/:transactionId', async (req, res) => {
   try {
     const { transactionId } = req.params;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         buyer: {
@@ -333,7 +333,7 @@ router.patch('/:transactionId/status', async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { status, reason } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     const validStatuses = [
       'INITIATED', 'ESCROW_PENDING', 'ESCROW_ACTIVE', 
@@ -350,7 +350,7 @@ router.patch('/:transactionId/status', async (req, res) => {
     }
 
     // Find transaction
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true }
     });
@@ -386,7 +386,7 @@ router.patch('/:transactionId/status', async (req, res) => {
     }
 
     // Update transaction
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status,
@@ -403,7 +403,7 @@ router.patch('/:transactionId/status', async (req, res) => {
     // Handle side effects based on status
     if (status === 'COMPLETED') {
       // Mark listing as sold
-      await prisma.listing.update({
+      await dbRouter.listing.update({
         where: { id: transaction.listing_id },
         data: { status: 'SOLD' }
       });
@@ -453,10 +453,10 @@ router.post('/:transactionId/dispute', async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { reason, description } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     // Find transaction
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId }
     });
 
@@ -476,7 +476,7 @@ router.post('/:transactionId/dispute', async (req, res) => {
     }
 
     // Update transaction status to disputed
-    await prisma.transaction.update({
+    await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: 'DISPUTED',
@@ -529,13 +529,13 @@ router.get('/admin/all',
         status, 
         disputed_only = false 
       } = req.query;
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
 
       let whereClause = {};
       if (status) whereClause.status = status.toUpperCase();
       if (disputed_only === 'true') whereClause.status = 'DISPUTED';
 
-      const transactions = await prisma.transaction.findMany({
+      const transactions = await dbRouter.transaction.findMany({
         where: whereClause,
         include: {
           buyer: {
@@ -566,7 +566,7 @@ router.get('/admin/all',
         take: parseInt(limit)
       });
 
-      const totalCount = await prisma.transaction.count({
+      const totalCount = await dbRouter.transaction.count({
         where: whereClause
       });
 

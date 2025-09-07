@@ -2,7 +2,7 @@
 // Complete admin dashboard controller with Nigerian market insights
 // Handles user management, vendor verification, transaction monitoring, and analytics
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { formatNairaAmount, fromKobo } = require('../config/paymentConfig');
 const { emitToUser } = require('../utils/socketUtils');
@@ -177,7 +177,7 @@ const getUsers = async (req, res) => {
 
     // Get users with counts
     const [users, totalCount] = await Promise.all([
-      prisma.user.findMany({
+      dbRouter.user.findMany({
         where: whereConditions,
         select: {
           id: true,
@@ -205,7 +205,7 @@ const getUsers = async (req, res) => {
         skip: offset,
         take: parseInt(limit)
       }),
-      prisma.user.count({ where: whereConditions })
+      dbRouter.user.count({ where: whereConditions })
     ]);
 
     const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -247,7 +247,7 @@ const getUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId },
       include: {
         listings: {
@@ -399,7 +399,7 @@ const updateUserRole = async (req, res) => {
     }
 
     // Check if user exists
-    const existingUser = await prisma.user.findUnique({
+    const existingUser = await dbRouter.user.findUnique({
       where: { id: userId }
     });
 
@@ -423,7 +423,7 @@ const updateUserRole = async (req, res) => {
     if (role) updateData.role = role;
     if (status) updateData.status = status;
 
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: updateData,
       select: {
@@ -506,7 +506,7 @@ const verifyVendor = async (req, res) => {
     const { userId } = req.params;
     const { verified, reason, documents_reviewed } = req.body;
 
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: userId },
       include: {
         vendor_profile: true
@@ -528,7 +528,7 @@ const verifyVendor = async (req, res) => {
     }
 
     // Update vendor verification status
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await dbRouter.user.update({
       where: { id: userId },
       data: {
         vendor_verified: verified,
@@ -647,7 +647,7 @@ const getListings = async (req, res) => {
     }
 
     const [listings, totalCount] = await Promise.all([
-      prisma.listing.findMany({
+      dbRouter.listing.findMany({
         where: whereConditions,
         include: {
           vendor: {
@@ -671,7 +671,7 @@ const getListings = async (req, res) => {
         skip: offset,
         take: parseInt(limit)
       }),
-      prisma.listing.count({ where: whereConditions })
+      dbRouter.listing.count({ where: whereConditions })
     ]);
 
     const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -723,7 +723,7 @@ const updateListingStatus = async (req, res) => {
       });
     }
 
-    const existingListing = await prisma.listing.findUnique({
+    const existingListing = await dbRouter.listing.findUnique({
       where: { id: listingId },
       include: {
         vendor: {
@@ -745,7 +745,7 @@ const updateListingStatus = async (req, res) => {
     if (is_featured !== undefined) updateData.is_featured = is_featured;
     if (admin_notes) updateData.admin_notes = admin_notes;
 
-    const updatedListing = await prisma.listing.update({
+    const updatedListing = await dbRouter.listing.update({
       where: { id: listingId },
       data: updateData,
       include: {
@@ -855,7 +855,7 @@ const getTransactions = async (req, res) => {
     }
 
     const [transactions, totalCount] = await Promise.all([
-      prisma.transaction.findMany({
+      dbRouter.transaction.findMany({
         where: whereConditions,
         include: {
           buyer: {
@@ -875,7 +875,7 @@ const getTransactions = async (req, res) => {
         skip: offset,
         take: parseInt(limit)
       }),
-      prisma.transaction.count({ where: whereConditions })
+      dbRouter.transaction.count({ where: whereConditions })
     ]);
 
     const totalPages = Math.ceil(totalCount / parseInt(limit));
@@ -917,7 +917,7 @@ const forceReleaseEscrow = async (req, res) => {
     const { transactionId } = req.params;
     const { reason } = req.body;
 
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: {
         buyer: true,
@@ -941,7 +941,7 @@ const forceReleaseEscrow = async (req, res) => {
     }
 
     // Update transaction status
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         status: 'COMPLETED',
@@ -1026,7 +1026,7 @@ const getDisputes = async (req, res) => {
     if (assigned_to) whereConditions.assigned_to = assigned_to;
 
     const [disputes, totalCount] = await Promise.all([
-      prisma.dispute.findMany({
+      dbRouter.dispute.findMany({
         where: whereConditions,
         include: {
           transaction: {
@@ -1044,7 +1044,7 @@ const getDisputes = async (req, res) => {
         skip: offset,
         take: parseInt(limit)
       }),
-      prisma.dispute.count({ where: whereConditions })
+      dbRouter.dispute.count({ where: whereConditions })
     ]);
 
     res.json({
@@ -1082,7 +1082,7 @@ const resolveDispute = async (req, res) => {
     const { disputeId } = req.params;
     const { resolution, refund_amount, winner, admin_notes } = req.body;
 
-    const dispute = await prisma.dispute.findUnique({
+    const dispute = await dbRouter.dispute.findUnique({
       where: { id: disputeId },
       include: {
         transaction: {
@@ -1110,7 +1110,7 @@ const resolveDispute = async (req, res) => {
     }
 
     // Update dispute
-    const updatedDispute = await prisma.dispute.update({
+    const updatedDispute = await dbRouter.dispute.update({
       where: { id: disputeId },
       data: {
         status: 'RESOLVED',
@@ -1125,7 +1125,7 @@ const resolveDispute = async (req, res) => {
 
     // Update transaction if needed
     if (refund_amount > 0) {
-      await prisma.transaction.update({
+      await dbRouter.transaction.update({
         where: { id: dispute.transaction_id },
         data: {
           status: 'REFUNDED',
@@ -1192,16 +1192,16 @@ const resolveDispute = async (req, res) => {
  */
 async function getUserStatistics(startDate, endDate) {
   const [total, newUsers, activeUsers, verifiedUsers] = await Promise.all([
-    prisma.user.count(),
-    prisma.user.count({
+    dbRouter.user.count(),
+    dbRouter.user.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.user.count({
+    dbRouter.user.count({
       where: {
         last_login: { gte: startDate, lte: endDate }
       }
     }),
-    prisma.user.count({
+    dbRouter.user.count({
       where: { email_verified: true }
     })
   ]);
@@ -1222,20 +1222,20 @@ async function getUserStatistics(startDate, endDate) {
  */
 async function getVendorStatistics(startDate, endDate) {
   const [total, newVendors, verifiedVendors, activeVendors] = await Promise.all([
-    prisma.user.count({ where: { role: 'VENDOR' } }),
-    prisma.user.count({
+    dbRouter.user.count({ where: { role: 'VENDOR' } }),
+    dbRouter.user.count({
       where: {
         role: 'VENDOR',
         created_at: { gte: startDate, lte: endDate }
       }
     }),
-    prisma.user.count({
+    dbRouter.user.count({
       where: {
         role: 'VENDOR',
         vendor_verified: true
       }
     }),
-    prisma.user.count({
+    dbRouter.user.count({
       where: {
         role: 'VENDOR',
         listings: { some: { status: 'ACTIVE' } }
@@ -1259,14 +1259,14 @@ async function getVendorStatistics(startDate, endDate) {
  */
 async function getListingStatistics(startDate, endDate) {
   const [total, newListings, activeListings, featuredListings] = await Promise.all([
-    prisma.listing.count(),
-    prisma.listing.count({
+    dbRouter.listing.count(),
+    dbRouter.listing.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.listing.count({
+    dbRouter.listing.count({
       where: { status: 'ACTIVE' }
     }),
-    prisma.listing.count({
+    dbRouter.listing.count({
       where: { is_featured: true }
     })
   ]);
@@ -1287,14 +1287,14 @@ async function getListingStatistics(startDate, endDate) {
  */
 async function getTransactionStatistics(startDate, endDate) {
   const [total, newTransactions, completedTransactions, disputedTransactions] = await Promise.all([
-    prisma.transaction.count(),
-    prisma.transaction.count({
+    dbRouter.transaction.count(),
+    dbRouter.transaction.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.transaction.count({
+    dbRouter.transaction.count({
       where: { status: 'COMPLETED' }
     }),
-    prisma.transaction.count({
+    dbRouter.transaction.count({
       where: {
         disputes: { some: { status: 'OPEN' } }
       }
@@ -1316,7 +1316,7 @@ async function getTransactionStatistics(startDate, endDate) {
  * Get revenue statistics
  */
 async function getRevenueStatistics(startDate, endDate) {
-  const result = await prisma.transaction.aggregate({
+  const result = await dbRouter.transaction.aggregate({
     _sum: { amount: true },
     where: {
       status: 'COMPLETED',
@@ -1343,14 +1343,14 @@ async function getRevenueStatistics(startDate, endDate) {
  */
 async function getDisputeStatistics(startDate, endDate) {
   const [total, newDisputes, openDisputes, resolvedDisputes] = await Promise.all([
-    prisma.dispute.count(),
-    prisma.dispute.count({
+    dbRouter.dispute.count(),
+    dbRouter.dispute.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.dispute.count({
+    dbRouter.dispute.count({
       where: { status: 'OPEN' }
     }),
-    prisma.dispute.count({
+    dbRouter.dispute.count({
       where: { status: 'RESOLVED' }
     })
   ]);
@@ -1369,7 +1369,7 @@ async function getDisputeStatistics(startDate, endDate) {
  * Get top categories
  */
 async function getTopCategories(startDate, endDate) {
-  return await prisma.listing.groupBy({
+  return await dbRouter.listing.groupBy({
     by: ['category'],
     _count: { category: true },
     where: {
@@ -1386,7 +1386,7 @@ async function getTopCategories(startDate, endDate) {
  * Get top locations
  */
 async function getTopLocations(startDate, endDate) {
-  return await prisma.user.groupBy({
+  return await dbRouter.user.groupBy({
     by: ['location'],
     _count: { location: true },
     where: {
@@ -1404,7 +1404,7 @@ async function getTopLocations(startDate, endDate) {
  * Get recent admin activity
  */
 async function getRecentActivity(limit = 10) {
-  return await prisma.adminAction.findMany({
+  return await dbRouter.adminAction.findMany({
     include: {
       admin: {
         select: { first_name: true, last_name: true }
@@ -1436,13 +1436,13 @@ function calculateGrowthRates(currentStats, previousStats) {
  */
 async function getPreviousPeriodStats(startDate, endDate) {
   const [users, transactions, revenue] = await Promise.all([
-    prisma.user.count({
+    dbRouter.user.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.transaction.count({
+    dbRouter.transaction.count({
       where: { created_at: { gte: startDate, lte: endDate } }
     }),
-    prisma.transaction.aggregate({
+    dbRouter.transaction.aggregate({
       _sum: { amount: true },
       where: {
         status: 'COMPLETED',
@@ -1459,7 +1459,7 @@ async function getPreviousPeriodStats(startDate, endDate) {
  */
 async function logAdminAction(actionData) {
   try {
-    return await prisma.adminAction.create({
+    return await dbRouter.adminAction.create({
       data: {
         ...actionData,
         ip_address: actionData.ip_address || 'unknown',
@@ -1476,7 +1476,7 @@ async function logAdminAction(actionData) {
  */
 async function createNotification(notificationData) {
   try {
-    return await prisma.notification.create({
+    return await dbRouter.notification.create({
       data: notificationData
     });
   } catch (error) {

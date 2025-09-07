@@ -380,7 +380,7 @@ class SecurityOptimizer {
 
       if (!userData) {
         // Fetch from database
-        const { dbRouter } = require('../config/db-optimized');
+        const { dbRouter } = require('../config/db');
         const client = dbRouter.getReadClient();
 
         const user = await client.user.findUnique({

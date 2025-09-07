@@ -187,8 +187,8 @@ const handleConnection = (socket, io) => {
       }
 
       // Get chat to determine recipient
-      const { prisma } = require('../config/db-original');
-      const chat = await prisma.chat.findUnique({
+      const { dbRouter, QueryOptimizer } = require('../config/db');
+      const chat = await dbRouter.chat.findUnique({
         where: { id: chatId },
         select: {
           buyer_id: true,

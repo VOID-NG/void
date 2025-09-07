@@ -13,9 +13,9 @@ reviewRouter.get('/:listingId', async (req, res) => {
   try {
     const { listingId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const reviews = await prisma.review.findMany({
+    const reviews = await dbRouter.review.findMany({
       where: { listing_id: listingId },
       include: {
         reviewer: {
@@ -37,9 +37,9 @@ reviewRouter.get('/:listingId', async (req, res) => {
 reviewRouter.post('/', verifyToken, async (req, res) => {
   try {
     const { listing_id, rating, comment } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const review = await prisma.review.create({
+    const review = await dbRouter.review.create({
       data: {
         listing_id,
         reviewer_id: req.user.id,
@@ -68,12 +68,12 @@ notificationRouter.use(verifyToken);
 notificationRouter.get('/', async (req, res) => {
   try {
     const { page = 1, limit = 20, unread_only = false } = req.query;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     const whereClause = { user_id: req.user.id };
     if (unread_only === 'true') whereClause.read_at = null;
 
-    const notifications = await prisma.notification.findMany({
+    const notifications = await dbRouter.notification.findMany({
       where: whereClause,
       orderBy: { created_at: 'desc' },
       skip: (parseInt(page) - 1) * parseInt(limit),
@@ -90,9 +90,9 @@ notificationRouter.get('/', async (req, res) => {
 notificationRouter.patch('/:notificationId/read', async (req, res) => {
   try {
     const { notificationId } = req.params;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    await prisma.notification.update({
+    await dbRouter.notification.update({
       where: { id: notificationId, user_id: req.user.id },
       data: { read_at: new Date() }
     });
@@ -113,9 +113,9 @@ const promotionRouter = express.Router();
 
 promotionRouter.get('/', async (req, res) => {
   try {
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
     
-    const promotions = await prisma.promotion.findMany({
+    const promotions = await dbRouter.promotion.findMany({
       where: {
         is_active: true,
         start_date: { lte: new Date() },
@@ -134,9 +134,9 @@ promotionRouter.get('/', async (req, res) => {
 promotionRouter.post('/validate', async (req, res) => {
   try {
     const { code, listing_id } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const promotion = await prisma.promotion.findFirst({
+    const promotion = await dbRouter.promotion.findFirst({
       where: {
         code: code.toUpperCase(),
         is_active: true,
@@ -182,9 +182,9 @@ subscriptionRouter.get('/plans', async (req, res) => {
 
 subscriptionRouter.get('/current', async (req, res) => {
   try {
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
     
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await dbRouter.subscription.findUnique({
       where: { user_id: req.user.id }
     });
 
@@ -198,11 +198,11 @@ subscriptionRouter.get('/current', async (req, res) => {
 subscriptionRouter.post('/upgrade', async (req, res) => {
   try {
     const { plan } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     // TODO: Integrate with payment processor
     
-    const subscription = await prisma.subscription.upsert({
+    const subscription = await dbRouter.subscription.upsert({
       where: { user_id: req.user.id },
       update: { plan, status: 'ACTIVE', updated_at: new Date() },
       create: { user_id: req.user.id, plan, status: 'ACTIVE' }
@@ -228,13 +228,13 @@ adminRouter.use(requireMinRole('ADMIN'));
 // Dashboard stats
 adminRouter.get('/dashboard', async (req, res) => {
   try {
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
     
     const stats = await Promise.all([
-      prisma.user.count(),
-      prisma.listing.count(),
-      prisma.transaction.count(),
-      prisma.transaction.aggregate({ _sum: { total_amount: true } })
+      dbRouter.user.count(),
+      dbRouter.listing.count(),
+      dbRouter.transaction.count(),
+      dbRouter.transaction.aggregate({ _sum: { total_amount: true } })
     ]);
 
     res.json({
@@ -256,13 +256,13 @@ adminRouter.get('/dashboard', async (req, res) => {
 adminRouter.get('/users', async (req, res) => {
   try {
     const { page = 1, limit = 50, role, status } = req.query;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     const whereClause = {};
     if (role) whereClause.role = role.toUpperCase();
     if (status) whereClause.status = status.toUpperCase();
 
-    const users = await prisma.user.findMany({
+    const users = await dbRouter.user.findMany({
       where: whereClause,
       select: {
         id: true,
@@ -292,19 +292,19 @@ adminRouter.patch('/users/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const { status, role } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
     const updateData = {};
     if (status) updateData.status = status.toUpperCase();
     if (role) updateData.role = role.toUpperCase();
 
-    const user = await prisma.user.update({
+    const user = await dbRouter.user.update({
       where: { id: userId },
       data: updateData
     });
 
     // Log admin action
-    await prisma.adminAction.create({
+    await dbRouter.adminAction.create({
       data: {
         admin_id: req.user.id,
         action_type: `user_${status ? 'status' : 'role'}_update`,
@@ -325,9 +325,9 @@ adminRouter.patch('/users/:userId', async (req, res) => {
 adminRouter.get('/listings', async (req, res) => {
   try {
     const { page = 1, limit = 50, status = 'PENDING_APPROVAL' } = req.query;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const listings = await prisma.listing.findMany({
+    const listings = await dbRouter.listing.findMany({
       where: { status: status.toUpperCase() },
       include: {
         vendor: {
@@ -355,15 +355,15 @@ adminRouter.patch('/listings/:listingId/status', async (req, res) => {
   try {
     const { listingId } = req.params;
     const { status, reason } = req.body;
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
 
-    const listing = await prisma.listing.update({
+    const listing = await dbRouter.listing.update({
       where: { id: listingId },
       data: { status: status.toUpperCase(), updated_at: new Date() }
     });
 
     // Log admin action
-    await prisma.adminAction.create({
+    await dbRouter.adminAction.create({
       data: {
         admin_id: req.user.id,
         action_type: `listing_${status.toLowerCase()}`,

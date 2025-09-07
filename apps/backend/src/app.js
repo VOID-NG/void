@@ -40,8 +40,8 @@ const authenticateSocket = async (socket, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
     // Get user info from database
-    const { prisma } = require('./config/db-original');
-    const user = await prisma.user.findUnique({
+    const { dbRouter } = require('./config/db');
+    const user = await dbRouter.user.findUnique({
       where: { id: decoded.userId },
       select: {
         id: true,
@@ -105,8 +105,8 @@ const setupSocketHandlers = (io) => {
         if (!chatId) return;
 
         // Verify user has access to this chat
-        const { prisma } = require('./config/db-original');
-        const chat = await prisma.chat.findFirst({
+        const { dbRouter } = require('./config/db');
+        const chat = await dbRouter.chat.findFirst({
           where: {
             id: chatId,
             OR: [
@@ -212,7 +212,7 @@ const createApp = async () => {
     // 1. INITIALIZE DATABASE
     // ================================
     
-    const { initializeDatabase } = require('./config/db-original');
+    const { initializeDatabase } = require('./config/db');
     await initializeDatabase();
     logger.info('✅ Database connected and ready');
 

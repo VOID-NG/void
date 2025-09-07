@@ -1,7 +1,7 @@
 // apps/backend/src/services/chatService.js
 // Complete chat service layer for VOID Marketplace
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const { CHAT_STATUS, MESSAGE_TYPE, USER_ROLES } = require('../config/constants');
 const logger = require('../utils/logger');
 const notificationService = require('./notificationService');
@@ -58,7 +58,7 @@ const createChat = async (chatData) => {
     }
 
     // Verify listing exists and get vendor info
-    const listing = await prisma.listing.findUnique({
+    const listing = await dbRouter.listing.findUnique({
       where: { id: listing_id },
       include: {
         vendor: {
@@ -77,7 +77,7 @@ const createChat = async (chatData) => {
     }
 
     // Check if chat already exists for this listing-buyer combination
-    const existingChat = await prisma.chat.findFirst({
+    const existingChat = await dbRouter.chat.findFirst({
       where: {
         listing_id,
         buyer_id,
@@ -88,7 +88,7 @@ const createChat = async (chatData) => {
     if (existingChat) {
       // Reactivate if archived
       if (existingChat.status === CHAT_STATUS.ARCHIVED) {
-        const reactivatedChat = await prisma.chat.update({
+        const reactivatedChat = await dbRouter.chat.update({
           where: { id: existingChat.id },
           data: {
             status: CHAT_STATUS.ACTIVE,
@@ -135,7 +135,7 @@ const createChat = async (chatData) => {
     }
 
     // Create new chat
-    const chat = await prisma.chat.create({
+    const chat = await dbRouter.chat.create({
       data: {
         listing_id,
         buyer_id,
@@ -222,7 +222,7 @@ const createChat = async (chatData) => {
  */
 const getChatById = async (chatId, userId) => {
   try {
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       include: {
         listing: {
@@ -336,7 +336,7 @@ const getUserChats = async (userId, options = {}) => {
 
     // Get chats and total count
     const [chats, total] = await Promise.all([
-      prisma.chat.findMany({
+      dbRouter.chat.findMany({
         where,
         include: {
           listing: {
@@ -403,7 +403,7 @@ const getUserChats = async (userId, options = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.chat.count({ where })
+      dbRouter.chat.count({ where })
     ]);
 
     // Format chats with additional metadata
@@ -473,7 +473,7 @@ const createMessage = async (messageData) => {
     }
 
     // Get chat and verify user is participant
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       include: {
         listing: {
@@ -496,14 +496,14 @@ const createMessage = async (messageData) => {
 
     // Reactivate archived chat
     if (chat.status === CHAT_STATUS.ARCHIVED) {
-      await prisma.chat.update({
+      await dbRouter.chat.update({
         where: { id: chatId },
         data: { status: CHAT_STATUS.ACTIVE }
       });
     }
 
     // Create message
-    const message = await prisma.message.create({
+    const message = await dbRouter.message.create({
       data: {
         chat_id: chatId,
         sender_id: senderId,
@@ -539,7 +539,7 @@ const createMessage = async (messageData) => {
     });
 
     // Update chat timestamp
-    await prisma.chat.update({
+    await dbRouter.chat.update({
       where: { id: chatId },
       data: { updated_at: new Date() }
     });
@@ -599,7 +599,7 @@ const getChatMessages = async (options) => {
     
     if (beforeMessageId) {
       // Get messages before specific message (for pagination)
-      const beforeMessage = await prisma.message.findUnique({
+      const beforeMessage = await dbRouter.message.findUnique({
         where: { id: beforeMessageId },
         select: { created_at: true }
       });
@@ -612,7 +612,7 @@ const getChatMessages = async (options) => {
     const offset = (page - 1) * limit;
 
     // Get messages
-    const messages = await prisma.message.findMany({
+    const messages = await dbRouter.message.findMany({
       where,
       include: {
         sender: {
@@ -643,7 +643,7 @@ const getChatMessages = async (options) => {
     });
 
     // Get total count
-    const total = await prisma.message.count({ where: { chat_id: chatId } });
+    const total = await dbRouter.message.count({ where: { chat_id: chatId } });
 
     // Mark messages as read
     await markMessagesAsRead(chatId, userId);
@@ -672,7 +672,7 @@ const getChatMessages = async (options) => {
  */
 const markMessagesAsRead = async (chatId, userId) => {
   try {
-    const result = await prisma.message.updateMany({
+    const result = await dbRouter.message.updateMany({
       where: {
         chat_id: chatId,
         sender_id: { not: userId },
@@ -712,7 +712,7 @@ const editMessage = async (editData) => {
     }
 
     // Get message and verify ownership
-    const message = await prisma.message.findUnique({
+    const message = await dbRouter.message.findUnique({
       where: { id: messageId }
     });
 
@@ -735,7 +735,7 @@ const editMessage = async (editData) => {
     }
 
     // Update message
-    const updatedMessage = await prisma.message.update({
+    const updatedMessage = await dbRouter.message.update({
       where: { id: messageId },
       data: {
         content: newContent.trim(),
@@ -775,7 +775,7 @@ const deleteMessage = async (deleteData) => {
     const { messageId, userId } = deleteData;
 
     // Get message and verify ownership
-    const message = await prisma.message.findUnique({
+    const message = await dbRouter.message.findUnique({
       where: { id: messageId }
     });
 
@@ -788,7 +788,7 @@ const deleteMessage = async (deleteData) => {
     }
 
     // Soft delete by updating content
-    const deletedMessage = await prisma.message.update({
+    const deletedMessage = await dbRouter.message.update({
       where: { id: messageId },
       data: {
         content: '[Message deleted]',
@@ -827,7 +827,7 @@ const updateChatStatus = async (chatId, status, userId) => {
       throw new UnauthorizedError('Access denied to this chat');
     }
 
-    const updatedChat = await prisma.chat.update({
+    const updatedChat = await dbRouter.chat.update({
       where: { id: chatId },
       data: {
         status,
@@ -880,7 +880,7 @@ const blockChat = async (chatId, userId) => {
  */
 const verifyUserChatAccess = async (userId, chatId) => {
   try {
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       select: {
         buyer_id: true,
@@ -906,7 +906,7 @@ const verifyUserChatAccess = async (userId, chatId) => {
  */
 const getChatParticipants = async (chatId) => {
   try {
-    const chat = await prisma.chat.findUnique({
+    const chat = await dbRouter.chat.findUnique({
       where: { id: chatId },
       include: {
         buyer: {
@@ -948,7 +948,7 @@ const getChatParticipants = async (chatId) => {
  */
 const updateChatActivity = async (chatId) => {
   try {
-    await prisma.chat.update({
+    await dbRouter.chat.update({
       where: { id: chatId },
       data: { updated_at: new Date() }
     });
@@ -1010,7 +1010,7 @@ const getChatStatistics = async (userId) => {
       unreadMessages,
       totalMessages
     ] = await Promise.all([
-      prisma.chat.count({
+      dbRouter.chat.count({
         where: {
           OR: [
             { buyer_id: userId },
@@ -1018,7 +1018,7 @@ const getChatStatistics = async (userId) => {
           ]
         }
       }),
-      prisma.chat.count({
+      dbRouter.chat.count({
         where: {
           OR: [
             { buyer_id: userId },
@@ -1027,7 +1027,7 @@ const getChatStatistics = async (userId) => {
           status: CHAT_STATUS.ACTIVE
         }
       }),
-      prisma.message.count({
+      dbRouter.message.count({
         where: {
           chat: {
             OR: [
@@ -1039,7 +1039,7 @@ const getChatStatistics = async (userId) => {
           is_read: false
         }
       }),
-      prisma.message.count({
+      dbRouter.message.count({
         where: {
           chat: {
             OR: [

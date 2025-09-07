@@ -2,7 +2,7 @@
 // JWT Authentication middleware for VOID Marketplace
 
 const jwt = require('jsonwebtoken');
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const { USER_STATUS, ERROR_CODES, API_CONFIG } = require('../config/constants');
 const logger = require('../utils/logger');
 
@@ -42,7 +42,7 @@ const verifyToken = async (req, res, next) => {
     });
 
     // Check if user exists and is active
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: decoded.userId },
       select: {
         id: true,
@@ -87,7 +87,7 @@ const verifyToken = async (req, res, next) => {
     }
 
     // Update last login time
-    await prisma.user.update({
+    await dbRouter.user.update({
       where: { id: user.id },
       data: { last_login: new Date() }
     });

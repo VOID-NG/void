@@ -1,7 +1,7 @@
 // apps/backend/src/services/SocketChatService.js
 // Complete real-time chat system with Socket.IO
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { emitToUser, emitToRoom } = require('../utils/socketUtils');
 
@@ -127,7 +127,7 @@ class SocketChatService {
       }
 
       // Verify user has access to this chat
-      const chat = await prisma.chat.findFirst({
+      const chat = await dbRouter.chat.findFirst({
         where: {
           id: chatId,
           OR: [
@@ -230,7 +230,7 @@ class SocketChatService {
       }
 
       // Verify chat access
-      const chat = await prisma.chat.findFirst({
+      const chat = await dbRouter.chat.findFirst({
         where: {
           id: chatId,
           OR: [
@@ -246,7 +246,7 @@ class SocketChatService {
       }
 
       // Create message
-      const message = await prisma.message.create({
+      const message = await dbRouter.message.create({
         data: {
           chat_id: chatId,
           sender_id: userId,
@@ -266,7 +266,7 @@ class SocketChatService {
       });
 
       // Update chat's last message
-      await prisma.chat.update({
+      await dbRouter.chat.update({
         where: { id: chatId },
         data: {
           last_message_id: message.id,
@@ -404,7 +404,7 @@ class SocketChatService {
       }
 
       // Verify chat and listing
-      const chat = await prisma.chat.findFirst({
+      const chat = await dbRouter.chat.findFirst({
         where: {
           id: chatId,
           OR: [
@@ -423,7 +423,7 @@ class SocketChatService {
       }
 
       // Create offer message
-      const offerMessage = await prisma.message.create({
+      const offerMessage = await dbRouter.message.create({
         data: {
           chat_id: chatId,
           sender_id: userId,
@@ -439,7 +439,7 @@ class SocketChatService {
       });
 
       // Update chat
-      await prisma.chat.update({
+      await dbRouter.chat.update({
         where: { id: chatId },
         data: {
           last_message_id: offerMessage.id,
@@ -527,7 +527,7 @@ class SocketChatService {
       
       const userId = socket.userId;
 
-      const counterMessage = await prisma.message.create({
+      const counterMessage = await dbRouter.message.create({
         data: {
           chat_id: chatId,
           sender_id: userId,
@@ -542,7 +542,7 @@ class SocketChatService {
         }
       });
 
-      await prisma.chat.update({
+      await dbRouter.chat.update({
         where: { id: chatId },
         data: {
           last_message_id: counterMessage.id,
@@ -587,7 +587,7 @@ class SocketChatService {
         return;
       }
 
-      const fileMessage = await prisma.message.create({
+      const fileMessage = await dbRouter.message.create({
         data: {
           chat_id: chatId,
           sender_id: userId,
@@ -605,7 +605,7 @@ class SocketChatService {
         }
       });
 
-      await prisma.chat.update({
+      await dbRouter.chat.update({
         where: { id: chatId },
         data: {
           last_message_id: fileMessage.id,
@@ -710,7 +710,7 @@ class SocketChatService {
   }
 
   async getUserActiveChats(userId) {
-    return await prisma.chat.findMany({
+    return await dbRouter.chat.findMany({
       where: {
         OR: [
           { buyer_id: userId },
@@ -726,7 +726,7 @@ class SocketChatService {
   }
 
   async getChatMessages(chatId, limit = 50) {
-    return await prisma.message.findMany({
+    return await dbRouter.message.findMany({
       where: { chat_id: chatId },
       include: {
         sender: { select: { id: true, username: true, avatar_url: true } },
@@ -752,14 +752,14 @@ class SocketChatService {
       whereClause.id = { lte: upToMessageId };
     }
 
-    await prisma.message.updateMany({
+    await dbRouter.message.updateMany({
       where: whereClause,
       data: { read_at: new Date() }
     });
   }
 
   async handleOfferResponse(chatId, messageId, userId, messageType, content) {
-    return await prisma.message.create({
+    return await dbRouter.message.create({
       data: {
         chat_id: chatId,
         sender_id: userId,
@@ -775,7 +775,7 @@ class SocketChatService {
 
   async updateUserPresence(userId, status) {
     try {
-      await prisma.user.update({
+      await dbRouter.user.update({
         where: { id: userId },
         data: { 
           last_seen: new Date(),
@@ -863,7 +863,7 @@ class SocketChatService {
   // Send message to specific chat (admin function)
   async sendAdminMessage(chatId, content, adminId) {
     try {
-      const message = await prisma.message.create({
+      const message = await dbRouter.message.create({
         data: {
           chat_id: chatId,
           sender_id: adminId,

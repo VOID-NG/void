@@ -6,7 +6,7 @@ const path = require('path');
 const axios = require('axios');
 const sharp = require('sharp');
 const FormData = require('form-data');
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('./logger');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { tryConsume } = require('./rateLimiter');
@@ -310,7 +310,7 @@ const generateListingTextEmbedding = async (listingId, textContent) => {
     const embedding = await generateEmbedding(combinedText, 'text');
 
     // Store in database
-    const embeddingRecord = await prisma.listingEmbedding.upsert({
+    const embeddingRecord = await dbRouter.listingEmbedding.upsert({
       where: {
         listing_id_embedding_type_source_url: {
           listing_id: listingId,
@@ -366,7 +366,7 @@ const generateListingImageEmbedding = async (listingId, imageUrl) => {
     const embedding = await generateEmbedding(imageFeatures, 'image');
 
     // Store in database
-    const embeddingRecord = await prisma.listingEmbedding.upsert({
+    const embeddingRecord = await dbRouter.listingEmbedding.upsert({
       where: {
         listing_id_embedding_type_source_url: {
           listing_id: listingId,
@@ -496,7 +496,7 @@ const findSimilarListings = async (queryEmbedding, options = {}) => {
       ...(excludeListingId ? [limit, excludeListingId] : [limit])
     ];
 
-    const results = await prisma.$queryRawUnsafe(query, ...params);
+    const results = await dbRouter.$queryRawUnsafe(query, ...params);
 
     logger.debug('Vector similarity search completed', {
       queryDimensions: queryEmbedding.length,

@@ -3,7 +3,7 @@
 
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { tryConsume } = require('../utils/rateLimiter');
 
@@ -527,7 +527,7 @@ const searchByText = async (query, options = {}) => {
 
     // Step 2: Get listings from database with expanded search
     const searchTerms = searchStrategy.expandedKeywords || [query];
-    const listings = await prisma.listing.findMany({
+    const listings = await dbRouter.listing.findMany({
       where: {
         status: 'ACTIVE',
         OR: searchTerms.map(term => ({
@@ -746,7 +746,7 @@ const getAIRecommendations = async (userId = null, options = {}) => {
     // Get user interaction history for personalization
     let userPreferences = {};
     if (userId) {
-      const userInteractions = await prisma.userInteraction.findMany({
+      const userInteractions = await dbRouter.userInteraction.findMany({
         where: { user_id: userId },
         include: { listing: { select: { category_id: true, tags: true } } },
         orderBy: { created_at: 'desc' },
@@ -758,7 +758,7 @@ const getAIRecommendations = async (userId = null, options = {}) => {
     }
 
     // Get candidate listings
-    const candidateListings = await prisma.listing.findMany({
+    const candidateListings = await dbRouter.listing.findMany({
       where: {
         status: 'ACTIVE',
         ...(userPreferences.preferredCategories ? {
@@ -984,7 +984,7 @@ const simpleProductAnalysis = async (mediaInput, mediaType) => {
  */
 const logSearchAnalytics = async (analytics) => {
   try {
-    await prisma.searchAnalytics.create({
+    await dbRouter.searchAnalytics.create({
       data: {
         user_id: analytics.userId,
         query_text: analytics.queryText,

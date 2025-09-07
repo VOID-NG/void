@@ -64,10 +64,10 @@ router.get('/', (req, res) => {
  */
 router.get('/health', async (req, res) => {
   try {
-    const { prisma } = require('../config/db-original');
+    const { dbRouter, QueryOptimizer } = require('../config/db');
     
     // Test database connection
-    await prisma.$queryRaw`SELECT 1`;
+    await dbRouter.$queryRaw`SELECT 1`;
     
     res.json({
       success: true,
@@ -623,7 +623,7 @@ if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES ===
    */
   router.post('/dev/create-test-user', async (req, res) => {
     try {
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
       const bcrypt = require('bcryptjs');
 
       const { email, role = 'USER' } = req.body;
@@ -637,7 +637,7 @@ if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES ===
       const password = 'TestUser123!';
       const hashedPassword = await bcrypt.hash(password, 12);
 
-      const user = await prisma.user.create({
+      const user = await dbRouter.user.create({
         data: {
           email,
           username: email.split('@')[0],

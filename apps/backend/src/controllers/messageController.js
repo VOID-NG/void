@@ -58,8 +58,8 @@ const {
       }
   
       // Get chat to determine recipient
-      const { prisma } = require('../config/db');
-      const chat = await prisma.chat.findUnique({
+      const { dbRouter, QueryOptimizer } = require('../config/db');
+      const chat = await dbRouter.chat.findUnique({
         where: { id: chat_id },
         select: {
           id: true,
@@ -237,8 +237,8 @@ const {
       }
   
       // Verify user has access to chat
-      const { prisma } = require('../config/db');
-      const chat = await prisma.chat.findUnique({
+      const { dbRouter, QueryOptimizer } = require('../config/db');
+      const chat = await dbRouter.chat.findUnique({
         where: { id: chatId },
         select: {
           buyer_id: true,
@@ -367,10 +367,10 @@ const {
         throw new ValidationError('Message ID is required');
       }
   
-      const { prisma } = require('../config/db');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
   
       // Get message to verify ownership
-      const message = await prisma.message.findUnique({
+      const message = await dbRouter.message.findUnique({
         where: { id: messageId },
         include: {
           chat: {
@@ -399,7 +399,7 @@ const {
       }
   
       // Soft delete the message
-      const deletedMessage = await prisma.message.update({
+      const deletedMessage = await dbRouter.message.update({
         where: { id: messageId },
         data: {
           content: '[Message deleted]',
@@ -463,10 +463,10 @@ const {
         throw new ValidationError('Content is required');
       }
   
-      const { prisma } = require('../config/db');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
   
       // Get message to verify ownership
-      const message = await prisma.message.findUnique({
+      const message = await dbRouter.message.findUnique({
         where: { id: messageId },
         include: {
           chat: {
@@ -512,7 +512,7 @@ const {
       }
   
       // Update the message
-      const updatedMessage = await prisma.message.update({
+      const updatedMessage = await dbRouter.message.update({
         where: { id: messageId },
         data: {
           content: content.trim(),

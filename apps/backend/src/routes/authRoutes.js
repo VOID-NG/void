@@ -225,13 +225,13 @@ router.patch('/admin/users/:id/verify-vendor',
   requireRole([USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN]),
   async (req, res) => {
     try {
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
       const logger = require('../utils/logger');
       const { id: userId } = req.params;
       const { approved, reason } = req.body;
 
       // Update vendor verification status
-      const updatedUser = await prisma.user.update({
+      const updatedUser = await dbRouter.user.update({
         where: { id: userId },
         data: { 
           vendor_verified: Boolean(approved),
@@ -247,7 +247,7 @@ router.patch('/admin/users/:id/verify-vendor',
       });
 
       // Create admin action record
-      await prisma.adminAction.create({
+      await dbRouter.adminAction.create({
         data: {
           admin_id: req.user.id,
           action_type: approved ? 'approve_vendor' : 'reject_vendor',
@@ -389,11 +389,11 @@ if (process.env.NODE_ENV === 'development') {
     try {
       const { email, username, role = 'USER' } = req.body;
       const bcrypt = require('bcryptjs');
-      const { prisma } = require('../config/db-original');
+      const { dbRouter, QueryOptimizer } = require('../config/db');
 
       const hashedPassword = await bcrypt.hash('TestPassword123!', 12);
 
-      const user = await prisma.user.create({
+      const user = await dbRouter.user.create({
         data: {
           email,
           username,

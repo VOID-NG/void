@@ -1,7 +1,7 @@
 // apps/backend/src/services/reviewService.js
 // Comprehensive review and rating system for Void Marketplace
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { BUSINESS_RULES } = require('../config/constants');
 const notificationService = require('./notificationService');
@@ -38,7 +38,7 @@ const createReview = async (reviewData) => {
     }
 
     // Check if transaction exists and is completed
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transaction_id },
       include: {
         listing: true,
@@ -61,7 +61,7 @@ const createReview = async (reviewData) => {
     }
 
     // Check if review already exists
-    const existingReview = await prisma.review.findFirst({
+    const existingReview = await dbRouter.review.findFirst({
       where: {
         transaction_id,
         reviewer_id,
@@ -80,7 +80,7 @@ const createReview = async (reviewData) => {
     }
 
     // Create the review
-    const review = await prisma.review.create({
+    const review = await dbRouter.review.create({
       data: {
         transaction_id,
         listing_id,
@@ -204,7 +204,7 @@ const getListingReviews = async (listingId, options = {}) => {
     }
 
     const [reviews, totalCount, ratingStats] = await Promise.all([
-      prisma.review.findMany({
+      dbRouter.review.findMany({
         where: whereClause,
         include: {
           reviewer: {
@@ -227,7 +227,7 @@ const getListingReviews = async (listingId, options = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.review.count({ where: whereClause }),
+      dbRouter.review.count({ where: whereClause }),
       getListingRatingStats(listingId)
     ]);
 
@@ -278,7 +278,7 @@ const getUserReviews = async (userId, options = {}) => {
     }
 
     const [reviews, totalCount, ratingStats] = await Promise.all([
-      prisma.review.findMany({
+      dbRouter.review.findMany({
         where: whereClause,
         include: {
           reviewer: {
@@ -320,7 +320,7 @@ const getUserReviews = async (userId, options = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.review.count({ where: whereClause }),
+      dbRouter.review.count({ where: whereClause }),
       as_reviewer ? null : getUserRatingStats(userId)
     ]);
 
@@ -349,7 +349,7 @@ const getUserReviews = async (userId, options = {}) => {
  */
 const getReview = async (reviewId, userId) => {
   try {
-    const review = await prisma.review.findUnique({
+    const review = await dbRouter.review.findUnique({
       where: { id: reviewId },
       include: {
         reviewer: {
@@ -430,7 +430,7 @@ const updateReview = async (reviewId, userId, updateData) => {
     const { rating, comment } = updateData;
 
     // Get existing review
-    const existingReview = await prisma.review.findUnique({
+    const existingReview = await dbRouter.review.findUnique({
       where: { id: reviewId },
       include: { transaction: true }
     });
@@ -455,7 +455,7 @@ const updateReview = async (reviewId, userId, updateData) => {
     }
 
     // Update review
-    const updatedReview = await prisma.review.update({
+    const updatedReview = await dbRouter.review.update({
       where: { id: reviewId },
       data: {
         ...(rating && { rating }),
@@ -523,7 +523,7 @@ const deleteReview = async (reviewId, userId, options = {}) => {
     const { admin_deletion = false, reason = null } = options;
 
     // Get existing review
-    const review = await prisma.review.findUnique({
+    const review = await dbRouter.review.findUnique({
       where: { id: reviewId },
       include: { transaction: true }
     });
@@ -546,7 +546,7 @@ const deleteReview = async (reviewId, userId, options = {}) => {
     }
 
     // Delete the review
-    await prisma.review.delete({
+    await dbRouter.review.delete({
       where: { id: reviewId }
     });
 
@@ -583,7 +583,7 @@ const deleteReview = async (reviewId, userId, options = {}) => {
  */
 const getListingRatingStats = async (listingId) => {
   try {
-    const stats = await prisma.review.aggregate({
+    const stats = await dbRouter.review.aggregate({
       where: {
         listing_id: listingId,
         review_type: 'LISTING_REVIEW'
@@ -592,7 +592,7 @@ const getListingRatingStats = async (listingId) => {
       _count: { rating: true }
     });
 
-    const ratingDistribution = await prisma.review.groupBy({
+    const ratingDistribution = await dbRouter.review.groupBy({
       by: ['rating'],
       where: {
         listing_id: listingId,
@@ -633,14 +633,14 @@ const getListingRatingStats = async (listingId) => {
 const getUserRatingStats = async (userId) => {
   try {
     // Get overall stats
-    const overallStats = await prisma.review.aggregate({
+    const overallStats = await dbRouter.review.aggregate({
       where: { reviewee_id: userId },
       _avg: { rating: true },
       _count: { rating: true }
     });
 
     // Get stats by review type
-    const statsByType = await prisma.review.groupBy({
+    const statsByType = await dbRouter.review.groupBy({
       by: ['review_type'],
       where: { reviewee_id: userId },
       _avg: { rating: true },
@@ -648,7 +648,7 @@ const getUserRatingStats = async (userId) => {
     });
 
     // Get rating distribution
-    const ratingDistribution = await prisma.review.groupBy({
+    const ratingDistribution = await dbRouter.review.groupBy({
       by: ['rating'],
       where: { reviewee_id: userId },
       _count: { rating: true }
@@ -698,7 +698,7 @@ const updateUserRatingStats = async (userId) => {
     const stats = await getUserRatingStats(userId);
     
     // Update user record with calculated stats
-    await prisma.user.update({
+    await dbRouter.user.update({
       where: { id: userId },
       data: {
         rating_average: stats.overall.average_rating,
@@ -726,7 +726,7 @@ const updateListingRatingStats = async (listingId) => {
     const stats = await getListingRatingStats(listingId);
     
     // Update listing record with calculated stats
-    await prisma.listing.update({
+    await dbRouter.listing.update({
       where: { id: listingId },
       data: {
         rating_average: stats.average_rating,
@@ -757,7 +757,7 @@ const updateListingRatingStats = async (listingId) => {
 const getReviewOpportunities = async (userId) => {
   try {
     // Get completed transactions where user hasn't left a review yet
-    const completedTransactions = await prisma.transaction.findMany({
+    const completedTransactions = await dbRouter.transaction.findMany({
       where: {
         OR: [
           { buyer_id: userId },
@@ -833,7 +833,7 @@ const sendReviewReminders = async () => {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const eligibleTransactions = await prisma.transaction.findMany({
+    const eligibleTransactions = await dbRouter.transaction.findMany({
       where: {
         status: 'COMPLETED',
         updated_at: {
@@ -925,7 +925,7 @@ const flagReview = async (reviewId, reporterId, reportData) => {
     const { reason, description } = reportData;
 
     // Check if review exists
-    const review = await prisma.review.findUnique({
+    const review = await dbRouter.review.findUnique({
       where: { id: reviewId }
     });
 
@@ -934,7 +934,7 @@ const flagReview = async (reviewId, reporterId, reportData) => {
     }
 
     // Check if user already reported this review
-    const existingReport = await prisma.reviewReport.findFirst({
+    const existingReport = await dbRouter.reviewReport.findFirst({
       where: {
         review_id: reviewId,
         reporter_id: reporterId
@@ -946,7 +946,7 @@ const flagReview = async (reviewId, reporterId, reportData) => {
     }
 
     // Create report
-    const report = await prisma.reviewReport.create({
+    const report = await dbRouter.reviewReport.create({
       data: {
         review_id: reviewId,
         reporter_id: reporterId,
@@ -1014,17 +1014,17 @@ const getReviewAnalytics = async (options = {}) => {
       ratingDistribution,
       reviewsByType
     ] = await Promise.all([
-      prisma.review.count({ where: whereClause }),
-      prisma.review.aggregate({
+      dbRouter.review.count({ where: whereClause }),
+      dbRouter.review.aggregate({
         where: whereClause,
         _avg: { rating: true }
       }),
-      prisma.review.groupBy({
+      dbRouter.review.groupBy({
         by: ['rating'],
         where: whereClause,
         _count: { rating: true }
       }),
-      prisma.review.groupBy({
+      dbRouter.review.groupBy({
         by: ['review_type'],
         where: whereClause,
         _count: { review_type: true },

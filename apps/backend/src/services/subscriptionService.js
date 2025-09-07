@@ -1,7 +1,7 @@
 // apps/backend/src/services/subscriptionService.js
 // Comprehensive subscription and billing management system
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { SUBSCRIPTION_PLAN, SUBSCRIPTION_STATUS, SUBSCRIPTION_FEATURES } = require('../config/constants');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -96,7 +96,7 @@ const createSubscription = async (subscriptionData) => {
     const planDetails = getSubscriptionPlan(plan);
     
     // Check if user already has a subscription
-    const existingSubscription = await prisma.subscription.findUnique({
+    const existingSubscription = await dbRouter.subscription.findUnique({
       where: { user_id }
     });
 
@@ -129,7 +129,7 @@ const createSubscription = async (subscriptionData) => {
     }
 
     // Create or update subscription record
-    const subscription = await prisma.subscription.upsert({
+    const subscription = await dbRouter.subscription.upsert({
       where: { user_id },
       update: {
         plan,
@@ -199,7 +199,7 @@ const createSubscription = async (subscriptionData) => {
  */
 const getUserSubscription = async (userId) => {
   try {
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await dbRouter.subscription.findUnique({
       where: { user_id: userId },
       include: {
         user: {
@@ -251,7 +251,7 @@ const updateSubscription = async (userId, updateData) => {
   try {
     const { plan, billing_cycle } = updateData;
 
-    const currentSubscription = await prisma.subscription.findUnique({
+    const currentSubscription = await dbRouter.subscription.findUnique({
       where: { user_id: userId }
     });
 
@@ -288,7 +288,7 @@ const updateSubscription = async (userId, updateData) => {
       const prorationAmount = calculateProration(currentSubscription, newPlanDetails);
 
       // Update subscription record
-      const updatedSubscription = await prisma.subscription.update({
+      const updatedSubscription = await dbRouter.subscription.update({
         where: { user_id: userId },
         data: {
           plan,
@@ -362,7 +362,7 @@ const cancelSubscription = async (userId, options = {}) => {
   try {
     const { immediate = false, reason = null } = options;
 
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await dbRouter.subscription.findUnique({
       where: { user_id: userId }
     });
 
@@ -380,7 +380,7 @@ const cancelSubscription = async (userId, options = {}) => {
     }
 
     // Update subscription record
-    const cancelledSubscription = await prisma.subscription.update({
+    const cancelledSubscription = await dbRouter.subscription.update({
       where: { user_id: userId },
       data: {
         status: immediate ? SUBSCRIPTION_STATUS.CANCELLED : SUBSCRIPTION_STATUS.ACTIVE,
@@ -434,7 +434,7 @@ const reactivateSubscription = async (userId, reactivationData = {}) => {
   try {
     const { payment_method_id = null } = reactivationData;
 
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await dbRouter.subscription.findUnique({
       where: { user_id: userId }
     });
 
@@ -467,7 +467,7 @@ const reactivateSubscription = async (userId, reactivationData = {}) => {
     }
 
     // Update subscription record
-    const reactivatedSubscription = await prisma.subscription.update({
+    const reactivatedSubscription = await dbRouter.subscription.update({
       where: { user_id: userId },
       data: {
         status: SUBSCRIPTION_STATUS.ACTIVE,
@@ -558,7 +558,7 @@ const checkListingLimit = async (userId) => {
   try {
     const [subscription, currentListingCount] = await Promise.all([
       getUserSubscription(userId),
-      prisma.listing.count({
+      dbRouter.listing.count({
         where: {
           vendor_id: userId,
           status: { in: ['ACTIVE', 'DRAFT'] }
@@ -606,28 +606,28 @@ const getSubscriptionUsage = async (userId) => {
       total3DModels,
       featuredListings
     ] = await Promise.all([
-      prisma.listing.count({
+      dbRouter.listing.count({
         where: { vendor_id: userId, status: 'ACTIVE' }
       }),
-      prisma.listing.count({
+      dbRouter.listing.count({
         where: { vendor_id: userId, status: 'DRAFT' }
       }),
-      prisma.listingImage.count({
+      dbRouter.listingImage.count({
         where: {
           listing: { vendor_id: userId }
         }
       }),
-      prisma.listingVideo.count({
+      dbRouter.listingVideo.count({
         where: {
           listing: { vendor_id: userId }
         }
       }),
-      prisma.listing3DModel.count({
+      dbRouter.listing3DModel.count({
         where: {
           listing: { vendor_id: userId }
         }
       }),
-      prisma.listing.count({
+      dbRouter.listing.count({
         where: { vendor_id: userId, is_featured: true }
       })
     ]);
@@ -698,7 +698,7 @@ const createStripeSubscription = async (subscriptionData) => {
     }
 
     // Get user details
-    const user = await prisma.user.findUnique({
+    const user = await dbRouter.user.findUnique({
       where: { id: user_id },
       select: { email: true, first_name: true, last_name: true }
     });
@@ -864,7 +864,7 @@ const getBillingHistory = async (userId, options = {}) => {
     const { page = 1, limit = 20 } = options;
 
     // Get subscription to find Stripe customer
-    const subscription = await prisma.subscription.findUnique({
+    const subscription = await dbRouter.subscription.findUnique({
       where: { user_id: userId }
     });
 
@@ -972,7 +972,7 @@ const processSubscriptionRenewals = async () => {
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     // Find subscriptions expiring in the next 24 hours
-    const expiringSubscriptions = await prisma.subscription.findMany({
+    const expiringSubscriptions = await dbRouter.subscription.findMany({
       where: {
         status: SUBSCRIPTION_STATUS.ACTIVE,
         current_period_end: {
@@ -993,7 +993,7 @@ const processSubscriptionRenewals = async () => {
       try {
         if (subscription.cancelled_at) {
           // Cancel subscription if marked for cancellation
-          await prisma.subscription.update({
+          await dbRouter.subscription.update({
             where: { id: subscription.id },
             data: {
               status: SUBSCRIPTION_STATUS.CANCELLED,
@@ -1006,7 +1006,7 @@ const processSubscriptionRenewals = async () => {
           results.renewed++;
         } else if (subscription.plan === SUBSCRIPTION_PLAN.FREE) {
           // Extend free subscription
-          await prisma.subscription.update({
+          await dbRouter.subscription.update({
             where: { id: subscription.id },
             data: {
               current_period_start: subscription.current_period_end,
@@ -1043,7 +1043,7 @@ const sendExpirationWarnings = async () => {
     const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     // Find subscriptions expiring in 3 or 7 days
-    const expiringSubscriptions = await prisma.subscription.findMany({
+    const expiringSubscriptions = await dbRouter.subscription.findMany({
       where: {
         status: SUBSCRIPTION_STATUS.ACTIVE,
         cancelled_at: { not: null }, // Only cancelled subscriptions
@@ -1121,16 +1121,16 @@ const getSubscriptionAnalytics = async (options = {}) => {
       revenueStats,
       churnRate
     ] = await Promise.all([
-      prisma.subscription.count(),
-      prisma.subscription.count({
+      dbRouter.subscription.count(),
+      dbRouter.subscription.count({
         where: { status: SUBSCRIPTION_STATUS.ACTIVE }
       }),
-      prisma.subscription.groupBy({
+      dbRouter.subscription.groupBy({
         by: ['plan'],
         _count: { plan: true },
         where: { status: SUBSCRIPTION_STATUS.ACTIVE }
       }),
-      prisma.subscription.aggregate({
+      dbRouter.subscription.aggregate({
         where: {
           status: SUBSCRIPTION_STATUS.ACTIVE,
           plan: { not: SUBSCRIPTION_PLAN.FREE }
@@ -1172,7 +1172,7 @@ const getSubscriptionAnalytics = async (options = {}) => {
 const calculateChurnRate = async (startDate, endDate) => {
   try {
     const [cancelledCount, activeStartCount] = await Promise.all([
-      prisma.subscription.count({
+      dbRouter.subscription.count({
         where: {
           cancelled_at: {
             gte: startDate,
@@ -1180,7 +1180,7 @@ const calculateChurnRate = async (startDate, endDate) => {
           }
         }
       }),
-      prisma.subscription.count({
+      dbRouter.subscription.count({
         where: {
           created_at: { lt: startDate },
           status: SUBSCRIPTION_STATUS.ACTIVE

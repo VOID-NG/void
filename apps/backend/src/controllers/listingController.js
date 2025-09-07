@@ -357,13 +357,13 @@ const removeListingMedia = asyncHandler(async (req, res) => {
     });
   }
 
-  const { prisma } = require('../config/db-original');
+  const { dbRouter, QueryOptimizer } = require('../config/db');
   
   let deletedMedia = null;
   
   switch (type) {
     case 'image':
-      deletedMedia = await prisma.listingImage.delete({
+      deletedMedia = await dbRouter.listingImage.delete({
         where: { 
           id: mediaId,
           listing_id: listingId 
@@ -371,7 +371,7 @@ const removeListingMedia = asyncHandler(async (req, res) => {
       });
       break;
     case 'video':
-      deletedMedia = await prisma.listingVideo.delete({
+      deletedMedia = await dbRouter.listingVideo.delete({
         where: { 
           id: mediaId,
           listing_id: listingId 
@@ -379,7 +379,7 @@ const removeListingMedia = asyncHandler(async (req, res) => {
       });
       break;
     case 'model':
-      deletedMedia = await prisma.listing3DModel.delete({
+      deletedMedia = await dbRouter.listing3DModel.delete({
         where: { 
           id: mediaId,
           listing_id: listingId 
@@ -425,12 +425,12 @@ const removeListingMedia = asyncHandler(async (req, res) => {
  * @access  Private
  */
 const toggleListingLike = asyncHandler(async (req, res) => {
-  const { prisma } = require('../config/db-original');
+  const { dbRouter, QueryOptimizer } = require('../config/db');
   const listingId = req.params.id;
   const userId = req.user.id;
 
   // Check if already liked
-  const existingLike = await prisma.userInteraction.findFirst({
+  const existingLike = await dbRouter.userInteraction.findFirst({
     where: {
       user_id: userId,
       listing_id: listingId,
@@ -440,11 +440,11 @@ const toggleListingLike = asyncHandler(async (req, res) => {
 
   if (existingLike) {
     // Unlike - remove interaction
-    await prisma.$transaction([
-      prisma.userInteraction.delete({
+    await dbRouter.$transaction([
+      dbRouter.userInteraction.delete({
         where: { id: existingLike.id }
       }),
-      prisma.listing.update({
+      dbRouter.listing.update({
         where: { id: listingId },
         data: { likes_count: { decrement: 1 } }
       })
@@ -457,15 +457,15 @@ const toggleListingLike = asyncHandler(async (req, res) => {
     });
   } else {
     // Like - add interaction
-    await prisma.$transaction([
-      prisma.userInteraction.create({
+    await dbRouter.$transaction([
+      dbRouter.userInteraction.create({
         data: {
           user_id: userId,
           listing_id: listingId,
           interaction_type: 'LIKE'
         }
       }),
-      prisma.listing.update({
+      dbRouter.listing.update({
         where: { id: listingId },
         data: { likes_count: { increment: 1 } }
       })
@@ -485,11 +485,11 @@ const toggleListingLike = asyncHandler(async (req, res) => {
  * @access  Private
  */
 const shareListing = asyncHandler(async (req, res) => {
-  const { prisma } = require('../config/db-original');
+  const { dbRouter, QueryOptimizer } = require('../config/db');
   const { platform, method } = req.body; // e.g., 'social', 'email', 'copy_link'
 
   // Track share interaction
-  await prisma.userInteraction.create({
+  await dbRouter.userInteraction.create({
     data: {
       user_id: req.user.id,
       listing_id: req.params.id,
@@ -529,10 +529,10 @@ const getListingAnalytics = asyncHandler(async (req, res) => {
     });
   }
 
-  const { prisma } = require('../config/db-original');
+  const { dbRouter, QueryOptimizer } = require('../config/db');
   
   // Get interaction statistics
-  const interactions = await prisma.userInteraction.groupBy({
+  const interactions = await dbRouter.userInteraction.groupBy({
     by: ['interaction_type'],
     where: { listing_id: req.params.id },
     _count: { interaction_type: true }
@@ -542,7 +542,7 @@ const getListingAnalytics = asyncHandler(async (req, res) => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const dailyViews = await prisma.userInteraction.groupBy({
+  const dailyViews = await dbRouter.userInteraction.groupBy({
     by: ['created_at'],
     where: {
       listing_id: req.params.id,

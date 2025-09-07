@@ -323,7 +323,7 @@ const reportError = async (error, context = {}) => {
 
     // Store critical errors in database for analysis
     if (error.statusCode >= 500) {
-      await prisma.errorLog.create({
+      await dbRouter.errorLog.create({
         data: {
           error_type: error.name,
           error_message: error.message,

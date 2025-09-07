@@ -475,7 +475,7 @@ class MonitoringSystem extends EventEmitter {
 
   async checkDatabaseHealth() {
     try {
-      const { dbRouter } = require('../config/db-optimized');
+      const { dbRouter } = require('../config/db');
       const startTime = Date.now();
       
       await dbRouter.getReadClient().$queryRaw`SELECT 1`;

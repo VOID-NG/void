@@ -350,8 +350,8 @@ const uploadAvatar = asyncHandler(async (req, res) => {
   const avatarUrl = `/uploads/avatars/${req.file.filename}`;
 
   // Update user avatar URL in database
-  const { prisma } = require('../config/db-original');
-  const updatedUser = await prisma.user.update({
+  const { dbRouter, QueryOptimizer } = require('../config/db');
+  const updatedUser = await dbRouter.user.update({
     where: { id: userId },
     data: { 
       avatar_url: avatarUrl,
@@ -443,8 +443,8 @@ const requestVendorVerification = asyncHandler(async (req, res) => {
   const { business_name, business_address, tax_id, documents } = req.body;
 
   // Update vendor information
-  const { prisma } = require('../config/db-original');
-  const updatedUser = await prisma.user.update({
+  const { dbRouter, QueryOptimizer } = require('../config/db');
+  const updatedUser = await dbRouter.user.update({
     where: { id: userId },
     data: {
       business_name,

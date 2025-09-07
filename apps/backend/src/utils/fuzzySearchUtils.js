@@ -1,7 +1,7 @@
 // apps/backend/src/utils/fuzzySearchUtils.js
 // Advanced fuzzy search and text matching utilities
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('./logger');
 
 // ================================
@@ -407,7 +407,7 @@ const fuzzyTextSearch = async (query, options = {}) => {
       offset
     );
 
-    const results = await prisma.$queryRawUnsafe(sqlQuery, ...params);
+    const results = await dbRouter.$queryRawUnsafe(sqlQuery, ...params);
 
     // Post-process results with additional similarity calculations
     const processedResults = results.map(result => {
@@ -486,7 +486,7 @@ const generateAutocompleteSuggestions = async (query, options = {}) => {
 
     // Get suggestions from search_suggestions table
     if (includePopular) {
-      const popularSuggestions = await prisma.searchSuggestion.findMany({
+      const popularSuggestions = await dbRouter.searchSuggestion.findMany({
         where: {
           suggestion_text: {
             contains: cleanQuery,
@@ -516,7 +516,7 @@ const generateAutocompleteSuggestions = async (query, options = {}) => {
     }
 
     // Get suggestions from listing titles
-    const titleSuggestions = await prisma.listing.findMany({
+    const titleSuggestions = await dbRouter.listing.findMany({
       where: {
         status: 'ACTIVE',
         title: {
@@ -544,7 +544,7 @@ const generateAutocompleteSuggestions = async (query, options = {}) => {
 
     // Get trending suggestions
     if (includeTrending) {
-      const trendingSuggestions = await prisma.searchSuggestion.findMany({
+      const trendingSuggestions = await dbRouter.searchSuggestion.findMany({
         where: {
           is_trending: true,
           suggestion_text: {
@@ -607,7 +607,7 @@ const updateSearchSuggestion = async (query, categoryId = null) => {
 
     const cleanQuery = query.toLowerCase().trim();
 
-    await prisma.searchSuggestion.upsert({
+    await dbRouter.searchSuggestion.upsert({
       where: {
         suggestion_text: cleanQuery
       },
@@ -656,7 +656,7 @@ const logSearchAnalytics = async (searchData) => {
       responseTimeMs
     } = searchData;
 
-    await prisma.searchAnalytics.create({
+    await dbRouter.searchAnalytics.create({
       data: {
         user_id: userId,
         query_text: queryText,

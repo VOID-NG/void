@@ -49,13 +49,13 @@ const prisma = new PrismaClient(prismaConfig);
 
 // Log database queries in development
 if (process.env.NODE_ENV === 'development' && process.env.LOG_DB_QUERIES === 'true') {
-  prisma.$on('query', (e) => {
+  dbRouter.$on('query', (e) => {
     logger.db(e.query, e.params, e.duration);
   });
 }
 
 // Log database errors
-prisma.$on('error', (e) => {
+dbRouter.$on('error', (e) => {
   logger.error('Database Error:', {
     error: e.message,
     target: e.target,
@@ -64,7 +64,7 @@ prisma.$on('error', (e) => {
 });
 
 // Log database info events
-prisma.$on('info', (e) => {
+dbRouter.$on('info', (e) => {
   logger.info('Database Info:', {
     message: e.message,
     category: 'database_info'
@@ -72,7 +72,7 @@ prisma.$on('info', (e) => {
 });
 
 // Log database warnings
-prisma.$on('warn', (e) => {
+dbRouter.$on('warn', (e) => {
   logger.warn('Database Warning:', {
     message: e.message,
     category: 'database_warning'
@@ -89,11 +89,11 @@ prisma.$on('warn', (e) => {
  */
 const testConnection = async () => {
   try {
-    await prisma.$connect();
+    await dbRouter.$connect();
     logger.info('✅ Database connected successfully');
     
     // Test a simple query
-    await prisma.$queryRaw`SELECT 1 as test`;
+    await dbRouter.$queryRaw`SELECT 1 as test`;
     logger.info('✅ Database query test successful');
     
     return true;
@@ -150,14 +150,14 @@ const initializeDatabase = async () => {
 const checkDatabaseAccess = async () => {
   try {
     // Check if we can create and drop a test table
-    await prisma.$executeRaw`
+    await dbRouter.$executeRaw`
       CREATE TABLE IF NOT EXISTS health_check_test (
         id SERIAL PRIMARY KEY,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `;
     
-    await prisma.$executeRaw`DROP TABLE IF EXISTS health_check_test`;
+    await dbRouter.$executeRaw`DROP TABLE IF EXISTS health_check_test`;
     
     logger.info('✅ Database permissions verified');
   } catch (error) {
@@ -207,7 +207,7 @@ const runHealthChecks = async () => {
  */
 const checkTableExists = async (tableName) => {
   try {
-    const result = await prisma.$queryRaw`
+    const result = await dbRouter.$queryRaw`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
         WHERE table_schema = 'public' 
@@ -228,13 +228,13 @@ const checkTableExists = async (tableName) => {
 const checkDatabaseStats = async () => {
   try {
     // Get database size
-    const sizeResult = await prisma.$queryRaw`
+    const sizeResult = await dbRouter.$queryRaw`
       SELECT 
         pg_size_pretty(pg_database_size(current_database())) as size
     `;
 
     // Get connection count
-    const connectionResult = await prisma.$queryRaw`
+    const connectionResult = await dbRouter.$queryRaw`
       SELECT 
         count(*) as active_connections 
       FROM pg_stat_activity 
@@ -265,7 +265,7 @@ const seedDatabase = async () => {
     logger.info('🌱 Seeding database with initial data...');
 
     // Check if data already exists
-    const userCount = await prisma.user.count();
+    const userCount = await dbRouter.user.count();
     if (userCount > 0) {
       logger.info('Database already contains data, skipping seed');
       return;
@@ -310,7 +310,7 @@ const seedCategories = async () => {
     ];
 
     for (const category of categories) {
-      await prisma.category.upsert({
+      await dbRouter.category.upsert({
         where: { name: category.name },
         update: {},
         create: category
@@ -336,7 +336,7 @@ const seedAdminUser = async () => {
     const adminPassword = process.env.ADMIN_PASSWORD || 'SecureAdmin123!';
     
     // Check if admin already exists
-    const existingAdmin = await prisma.user.findUnique({
+    const existingAdmin = await dbRouter.user.findUnique({
       where: { email: adminEmail }
     });
 
@@ -349,7 +349,7 @@ const seedAdminUser = async () => {
     const hashedPassword = await bcrypt.hash(adminPassword, 12);
 
     // Create admin user
-    await prisma.user.create({
+    await dbRouter.user.create({
       data: {
         email: adminEmail,
         username: 'admin',
@@ -389,7 +389,7 @@ const seedSampleData = async () => {
     const bcrypt = require('bcryptjs');
     const testPassword = await bcrypt.hash('TestUser123!', 12);
 
-    const testVendor = await prisma.user.upsert({
+    const testVendor = await dbRouter.user.upsert({
       where: { email: 'vendor@test.com' },
       update: {},
       create: {
@@ -407,7 +407,7 @@ const seedSampleData = async () => {
     });
 
     // Create test buyer
-    const testBuyer = await prisma.user.upsert({
+    const testBuyer = await dbRouter.user.upsert({
       where: { email: 'buyer@test.com' },
       update: {},
       create: {
@@ -423,13 +423,13 @@ const seedSampleData = async () => {
     });
 
     // Get Electronics category
-    const electronicsCategory = await prisma.category.findFirst({
+    const electronicsCategory = await dbRouter.category.findFirst({
       where: { name: 'Electronics' }
     });
 
     if (electronicsCategory) {
       // Create sample listing
-      await prisma.listing.upsert({
+      await dbRouter.listing.upsert({
         where: { 
           vendor_id_title: {
             vendor_id: testVendor.id,
@@ -478,7 +478,7 @@ const cleanupOldData = async () => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     // Clean up old notifications
-    const deletedNotifications = await prisma.notification.deleteMany({
+    const deletedNotifications = await dbRouter.notification.deleteMany({
       where: {
         created_at: { lt: thirtyDaysAgo },
         is_read: true
@@ -486,14 +486,14 @@ const cleanupOldData = async () => {
     });
 
     // Clean up old search analytics
-    const deletedSearchAnalytics = await prisma.searchAnalytics.deleteMany({
+    const deletedSearchAnalytics = await dbRouter.searchAnalytics.deleteMany({
       where: {
         created_at: { lt: thirtyDaysAgo }
       }
     });
 
     // Clean up old user interactions
-    const deletedInteractions = await prisma.userInteraction.deleteMany({
+    const deletedInteractions = await dbRouter.userInteraction.deleteMany({
       where: {
         created_at: { lt: thirtyDaysAgo }
       }
@@ -517,7 +517,7 @@ const cleanupOldData = async () => {
 const analyzePerformance = async () => {
   try {
     // Get table sizes
-    const tableSizes = await prisma.$queryRaw`
+    const tableSizes = await dbRouter.$queryRaw`
       SELECT 
         schemaname,
         tablename,
@@ -529,7 +529,7 @@ const analyzePerformance = async () => {
     `;
 
     // Get slow queries (if available)
-    const slowQueries = await prisma.$queryRaw`
+    const slowQueries = await dbRouter.$queryRaw`
       SELECT 
         query,
         calls,
@@ -568,7 +568,7 @@ const analyzePerformance = async () => {
 const gracefulShutdown = async () => {
   try {
     logger.info('🔌 Disconnecting from database...');
-    await prisma.$disconnect();
+    await dbRouter.$disconnect();
     logger.info('✅ Database disconnected successfully');
   } catch (error) {
     logger.error('Database disconnect failed:', error);

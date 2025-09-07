@@ -1,7 +1,7 @@
 // apps/backend/src/services/promotionService.js
 // Comprehensive promotion and discount management system
 
-const { prisma } = require('../config/db-original');
+const { dbRouter, QueryOptimizer } = require('../config/db');
 const logger = require('../utils/logger');
 const { PROMOTION_TYPE } = require('../config/constants');
 const notificationService = require('./notificationService');
@@ -54,7 +54,7 @@ const createPromotion = async (promotionData) => {
     }
 
     // Check if promotion code already exists
-    const existingPromotion = await prisma.promotion.findUnique({
+    const existingPromotion = await dbRouter.promotion.findUnique({
       where: { code: code.toUpperCase() }
     });
 
@@ -72,7 +72,7 @@ const createPromotion = async (promotionData) => {
     }
 
     // Create promotion
-    const promotion = await prisma.promotion.create({
+    const promotion = await dbRouter.promotion.create({
       data: {
         code: code.toUpperCase(),
         name,
@@ -125,7 +125,7 @@ const validatePromotion = async (code, validationData) => {
     } = validationData;
 
     // Find active promotion
-    const promotion = await prisma.promotion.findFirst({
+    const promotion = await dbRouter.promotion.findFirst({
       where: {
         code: code.toUpperCase(),
         is_active: true,
@@ -186,7 +186,7 @@ const validatePromotion = async (code, validationData) => {
 
     // Check user usage limit
     if (promotion.user_limit) {
-      const userUsageCount = await prisma.transaction.count({
+      const userUsageCount = await dbRouter.transaction.count({
         where: {
           buyer_id: user_id,
           promotion_code: code.toUpperCase(),
@@ -232,7 +232,7 @@ const validatePromotion = async (code, validationData) => {
 const applyPromotion = async (promotionCode, transactionId) => {
   try {
     // Get transaction details
-    const transaction = await prisma.transaction.findUnique({
+    const transaction = await dbRouter.transaction.findUnique({
       where: { id: transactionId },
       include: { listing: true }
     });
@@ -258,7 +258,7 @@ const applyPromotion = async (promotionCode, transactionId) => {
     }
 
     // Update transaction with promotion
-    const updatedTransaction = await prisma.transaction.update({
+    const updatedTransaction = await dbRouter.transaction.update({
       where: { id: transactionId },
       data: {
         promotion_code: promotionCode.toUpperCase(),
@@ -268,7 +268,7 @@ const applyPromotion = async (promotionCode, transactionId) => {
     });
 
     // Increment promotion usage count
-    await prisma.promotion.update({
+    await dbRouter.promotion.update({
       where: { id: validationResult.promotion.id },
       data: {
         usage_count: { increment: 1 }
@@ -331,7 +331,7 @@ const getActivePromotions = async (options = {}) => {
     }
 
     const [promotions, totalCount] = await Promise.all([
-      prisma.promotion.findMany({
+      dbRouter.promotion.findMany({
         where: whereClause,
         orderBy: [
           { valid_until: 'asc' },
@@ -340,7 +340,7 @@ const getActivePromotions = async (options = {}) => {
         skip: offset,
         take: limit
       }),
-      prisma.promotion.count({ where: whereClause })
+      dbRouter.promotion.count({ where: whereClause })
     ]);
 
     // Filter by category eligibility if specified
@@ -388,12 +388,12 @@ const getPromotion = async (identifier, options = {}) => {
     const { include_usage_stats = false } = options;
 
     // Try to find by ID first, then by code
-    let promotion = await prisma.promotion.findUnique({
+    let promotion = await dbRouter.promotion.findUnique({
       where: { id: identifier }
     });
 
     if (!promotion) {
-      promotion = await prisma.promotion.findUnique({
+      promotion = await dbRouter.promotion.findUnique({
         where: { code: identifier.toUpperCase() }
       });
     }
@@ -448,7 +448,7 @@ const updatePromotion = async (promotionId, updateData, updatedBy) => {
     } = updateData;
 
     // Get existing promotion
-    const existingPromotion = await prisma.promotion.findUnique({
+    const existingPromotion = await dbRouter.promotion.findUnique({
       where: { id: promotionId }
     });
 
@@ -483,7 +483,7 @@ const updatePromotion = async (promotionId, updateData, updatedBy) => {
     if (target_categories !== undefined) updateFields.target_categories = target_categories ? JSON.stringify(target_categories) : null;
 
     // Update promotion
-    const updatedPromotion = await prisma.promotion.update({
+    const updatedPromotion = await dbRouter.promotion.update({
       where: { id: promotionId },
       data: updateFields
     });
@@ -514,7 +514,7 @@ const updatePromotion = async (promotionId, updateData, updatedBy) => {
  */
 const deactivatePromotion = async (promotionId, deactivatedBy) => {
   try {
-    const updatedPromotion = await prisma.promotion.update({
+    const updatedPromotion = await dbRouter.promotion.update({
       where: { id: promotionId },
       data: {
         is_active: false,
@@ -590,11 +590,11 @@ const getPromotionUsageStats = async (promotionId) => {
   try {
     const [usageByDay, topUsers, categoryBreakdown] = await Promise.all([
       // Usage by day
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['created_at'],
         where: {
           promotion_code: {
-            in: await prisma.promotion.findUnique({
+            in: await dbRouter.promotion.findUnique({
               where: { id: promotionId },
               select: { code: true }
             }).then(p => p ? [p.code] : [])
@@ -605,11 +605,11 @@ const getPromotionUsageStats = async (promotionId) => {
       }),
 
       // Top users by usage
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['buyer_id'],
         where: {
           promotion_code: {
-            in: await prisma.promotion.findUnique({
+            in: await dbRouter.promotion.findUnique({
               where: { id: promotionId },
               select: { code: true }
             }).then(p => p ? [p.code] : [])
@@ -622,11 +622,11 @@ const getPromotionUsageStats = async (promotionId) => {
       }),
 
       // Category breakdown
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['listing_id'],
         where: {
           promotion_code: {
-            in: await prisma.promotion.findUnique({
+            in: await dbRouter.promotion.findUnique({
               where: { id: promotionId },
               select: { code: true }
             }).then(p => p ? [p.code] : [])
@@ -688,7 +688,7 @@ const cleanupExpiredPromotions = async () => {
   try {
     const now = new Date();
 
-    const result = await prisma.promotion.updateMany({
+    const result = await dbRouter.promotion.updateMany({
       where: {
         is_active: true,
         valid_until: { lt: now }
@@ -736,7 +736,7 @@ const createPromotionCampaign = async (campaignData) => {
     } = campaignData;
 
     // Create campaign record (if table exists)
-    const campaign = await prisma.promotionCampaign.create({
+    const campaign = await dbRouter.promotionCampaign.create({
       data: {
         name,
         description,
@@ -808,7 +808,7 @@ const sendPromotionNotifications = async (promotionId, options = {}) => {
     
     switch (target_audience) {
       case 'new_users':
-        targetUsers = await prisma.user.findMany({
+        targetUsers = await dbRouter.user.findMany({
           where: {
             created_at: {
               gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Last 30 days
@@ -820,7 +820,7 @@ const sendPromotionNotifications = async (promotionId, options = {}) => {
         break;
         
       case 'existing_users':
-        targetUsers = await prisma.user.findMany({
+        targetUsers = await dbRouter.user.findMany({
           where: {
             created_at: {
               lt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
@@ -833,7 +833,7 @@ const sendPromotionNotifications = async (promotionId, options = {}) => {
         
       case 'high_value_users':
         // Users with transactions > $500 in last 6 months
-        targetUsers = await prisma.user.findMany({
+        targetUsers = await dbRouter.user.findMany({
           where: {
             status: 'ACTIVE',
             transactions_buyer: {
@@ -851,7 +851,7 @@ const sendPromotionNotifications = async (promotionId, options = {}) => {
         break;
         
       default: // 'all'
-        targetUsers = await prisma.user.findMany({
+        targetUsers = await dbRouter.user.findMany({
           where: { status: 'ACTIVE' },
           select: { id: true }
         });
@@ -920,7 +920,7 @@ const getPromotionAnalytics = async (options = {}) => {
     };
 
     if (promotion_id) {
-      const promotion = await prisma.promotion.findUnique({
+      const promotion = await dbRouter.promotion.findUnique({
         where: { id: promotion_id },
         select: { code: true }
       });
@@ -937,16 +937,16 @@ const getPromotionAnalytics = async (options = {}) => {
       promotionBreakdown,
       conversionStats
     ] = await Promise.all([
-      prisma.transaction.count({ where: whereClause }),
-      prisma.transaction.aggregate({
+      dbRouter.transaction.count({ where: whereClause }),
+      dbRouter.transaction.aggregate({
         where: whereClause,
         _sum: { discount_amount: true }
       }),
-      prisma.transaction.aggregate({
+      dbRouter.transaction.aggregate({
         where: whereClause,
         _avg: { discount_amount: true }
       }),
-      prisma.transaction.groupBy({
+      dbRouter.transaction.groupBy({
         by: ['promotion_code'],
         where: whereClause,
         _count: { id: true },
@@ -955,7 +955,7 @@ const getPromotionAnalytics = async (options = {}) => {
         take: 10
       }),
       // Calculate conversion from promotion views to usage
-      prisma.promotion.findMany({
+      dbRouter.promotion.findMany({
         where: {
           created_at: {
             gte: start_date,
