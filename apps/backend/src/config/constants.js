@@ -2,7 +2,7 @@
 // System-wide constants for VOID Marketplace
 
 // ================================
-// USER ROLES & PERMISSIONS
+// USER MANAGEMENT CONSTANTS
 // ================================
 
 const USER_ROLES = {
@@ -13,60 +13,16 @@ const USER_ROLES = {
   USER: 'USER'
 };
 
-const ROLE_PERMISSIONS = {
-  [USER_ROLES.SUPER_ADMIN]: [
-    'manage_all_users',
-    'manage_all_vendors',
-    'manage_all_listings',
-    'manage_all_transactions',
-    'manage_disputes',
-    'manage_roles',
-    'view_analytics',
-    'manage_promotions',
-    'manage_subscriptions',
-    'system_settings'
-  ],
-  [USER_ROLES.ADMIN]: [
-    'manage_users',
-    'manage_vendors',
-    'manage_listings',
-    'manage_transactions',
-    'view_analytics',
-    'manage_promotions',
-    'basic_dispute_resolution'
-  ],
-  [USER_ROLES.MODERATOR]: [
-    'moderate_listings',
-    'moderate_reviews',
-    'basic_user_actions',
-    'basic_dispute_resolution'
-  ],
-  [USER_ROLES.VENDOR]: [
-    'create_listings',
-    'manage_own_listings',
-    'view_own_analytics',
-    'manage_own_promotions',
-    'respond_to_chats'
-  ],
-  [USER_ROLES.USER]: [
-    'browse_listings',
-    'search_products',
-    'initiate_chats',
-    'make_purchases',
-    'leave_reviews'
-  ]
-};
-
-// ================================
-// STATUS ENUMS
-// ================================
-
 const USER_STATUS = {
   ACTIVE: 'ACTIVE',
   SUSPENDED: 'SUSPENDED',
   BANNED: 'BANNED',
   PENDING_VERIFICATION: 'PENDING_VERIFICATION'
 };
+
+// ================================
+// LISTING MANAGEMENT CONSTANTS
+// ================================
 
 const LISTING_STATUS = {
   DRAFT: 'DRAFT',
@@ -85,21 +41,31 @@ const LISTING_CONDITION = {
   POOR: 'POOR'
 };
 
+// ================================
+// TRANSACTION CONSTANTS
+// ================================
+
 const TRANSACTION_STATUS = {
   INITIATED: 'INITIATED',
-  ESCROW: 'ESCROW',
   ESCROW_PENDING: 'ESCROW_PENDING',
   ESCROW_ACTIVE: 'ESCROW_ACTIVE',
   PAYMENT_RELEASED: 'PAYMENT_RELEASED',
-  SHIPPED: 'SHIPPED',
-  DELIVERED: 'DELIVERED',
   COMPLETED: 'COMPLETED',
   DISPUTED: 'DISPUTED',
   CANCELLED: 'CANCELLED',
-  REFUNDED: 'REFUNDED',
-  FAILED: 'FAILED',
-  RETURN_REQUESTED: 'RETURN_REQUESTED'
+  REFUNDED: 'REFUNDED'
 };
+
+const PAYMENT_METHODS = {
+  STRIPE: 'stripe',
+  PAYSTACK: 'paystack',
+  BANK_TRANSFER: 'bank_transfer',
+  CRYPTO: 'crypto'
+};
+
+// ================================
+// CHAT & MESSAGING CONSTANTS
+// ================================
 
 const CHAT_STATUS = {
   ACTIVE: 'ACTIVE',
@@ -113,8 +79,14 @@ const MESSAGE_TYPE = {
   OFFER: 'OFFER',
   COUNTER_OFFER: 'COUNTER_OFFER',
   OFFER_ACCEPTED: 'OFFER_ACCEPTED',
-  OFFER_REJECTED: 'OFFER_REJECTED'
+  OFFER_REJECTED: 'OFFER_REJECTED',
+  FILE: 'FILE',
+  SYSTEM: 'SYSTEM'
 };
+
+// ================================
+// NOTIFICATION CONSTANTS
+// ================================
 
 const NOTIFICATION_TYPE = {
   CHAT_MESSAGE: 'CHAT_MESSAGE',
@@ -124,17 +96,16 @@ const NOTIFICATION_TYPE = {
   PAYMENT_RECEIVED: 'PAYMENT_RECEIVED',
   PRODUCT_SOLD: 'PRODUCT_SOLD',
   ADMIN_ALERT: 'ADMIN_ALERT',
-  SYSTEM_UPDATE: 'SYSTEM_UPDATE'
+  SYSTEM_UPDATE: 'SYSTEM_UPDATE',
+  LISTING_APPROVED: 'LISTING_APPROVED',
+  LISTING_REJECTED: 'LISTING_REJECTED',
+  VENDOR_VERIFIED: 'VENDOR_VERIFIED',
+  TRANSACTION_UPDATE: 'TRANSACTION_UPDATE'
 };
 
-const INTERACTION_TYPE = {
-  VIEW: 'VIEW',
-  LIKE: 'LIKE',
-  SHARE: 'SHARE',
-  PURCHASE: 'PURCHASE',
-  CART_ADD: 'CART_ADD',
-  SEARCH_CLICK: 'SEARCH_CLICK'
-};
+// ================================
+// SUBSCRIPTION CONSTANTS
+// ================================
 
 const SUBSCRIPTION_PLAN = {
   FREE: 'FREE',
@@ -150,164 +121,143 @@ const SUBSCRIPTION_STATUS = {
   PENDING: 'PENDING'
 };
 
+// ================================
+// PROMOTION CONSTANTS
+// ================================
+
 const PROMOTION_TYPE = {
   PERCENTAGE_DISCOUNT: 'PERCENTAGE_DISCOUNT',
-  FIXED_DISCOUNT: 'FIXED_DISCOUNT',
+  FIXED_AMOUNT: 'FIXED_AMOUNT',
   FREE_SHIPPING: 'FREE_SHIPPING',
   BUY_ONE_GET_ONE: 'BUY_ONE_GET_ONE'
 };
 
 // ================================
-// FILE UPLOAD CONFIGURATIONS
-// ================================
-
-const UPLOAD_LIMITS = {
-  IMAGES: {
-    MAX_COUNT: 10,
-    MAX_SIZE: 5 * 1024 * 1024, // 5MB per image
-    ALLOWED_TYPES: ['image/jpeg', 'image/png', 'image/webp'],
-    ALLOWED_EXTENSIONS: ['.jpg', '.jpeg', '.png', '.webp']
-  },
-  VIDEOS: {
-    MAX_COUNT: 1,
-    MAX_SIZE: 100 * 1024 * 1024, // 100MB
-    MAX_DURATION: 300, // 5 minutes in seconds
-    ALLOWED_TYPES: ['video/mp4', 'video/webm', 'video/quicktime'],
-    ALLOWED_EXTENSIONS: ['.mp4', '.webm', '.mov']
-  },
-  MODELS_3D: {
-    MAX_COUNT: 3,
-    MAX_SIZE: 50 * 1024 * 1024, // 50MB per model
-    ALLOWED_TYPES: ['model/gltf-binary', 'application/octet-stream'],
-    ALLOWED_EXTENSIONS: ['.glb', '.obj', '.gltf']
-  },
-  AVATARS: {
-    MAX_SIZE: 2 * 1024 * 1024, // 2MB
-    ALLOWED_TYPES: ['image/jpeg', 'image/png', 'image/webp'],
-    ALLOWED_EXTENSIONS: ['.jpg', '.jpeg', '.png', '.webp']
-  }
-};
-
-// ================================
-// BUSINESS RULES & FEES
+// BUSINESS RULES
 // ================================
 
 const BUSINESS_RULES = {
-  PLATFORM_FEE_PERCENTAGE: 0.05, // 5% platform fee
-  ESCROW_RELEASE_DAYS: 7, // Days to auto-release escrow
-  MAX_NEGOTIATION_ROUNDS: 10,
-  MIN_LISTING_PRICE: 1.00,
-  MAX_LISTING_PRICE: 999999.99,
-  REVIEW_WINDOW_DAYS: 30, // Days to leave review after purchase
-  CHAT_MESSAGE_MAX_LENGTH: 1000,
-  LISTING_TITLE_MAX_LENGTH: 100,
-  LISTING_DESCRIPTION_MAX_LENGTH: 5000,
-  MAX_TAGS_PER_LISTING: 10,
-  TAG_MAX_LENGTH: 30
-};
-
-const SUBSCRIPTION_FEATURES = {
-  [SUBSCRIPTION_PLAN.FREE]: {
-    max_listings: 5,
-    max_images_per_listing: 3,
-    max_videos_per_listing: 0,
-    max_3d_models_per_listing: 0,
-    featured_listings: 0,
-    analytics_access: false,
-    promotion_tools: false,
-    priority_support: false,
-    custom_branding: false
-  },
-  [SUBSCRIPTION_PLAN.BASIC]: {
-    max_listings: 25,
-    max_images_per_listing: 6,
-    max_videos_per_listing: 1,
-    max_3d_models_per_listing: 1,
-    featured_listings: 1,
-    analytics_access: true,
-    promotion_tools: true,
-    priority_support: false,
-    custom_branding: false
-  },
-  [SUBSCRIPTION_PLAN.PREMIUM]: {
-    max_listings: 100,
-    max_images_per_listing: 10,
-    max_videos_per_listing: 1,
-    max_3d_models_per_listing: 3,
-    featured_listings: 5,
-    analytics_access: true,
-    promotion_tools: true,
-    priority_support: true,
-    custom_branding: true
-  },
-  [SUBSCRIPTION_PLAN.ENTERPRISE]: {
-    max_listings: -1, // Unlimited
-    max_images_per_listing: 10,
-    max_videos_per_listing: 1,
-    max_3d_models_per_listing: 3,
-    featured_listings: 20,
-    analytics_access: true,
-    promotion_tools: true,
-    priority_support: true,
-    custom_branding: true
-  }
+  // Platform fees
+  PLATFORM_FEE_PERCENTAGE: 0.05, // 5%
+  PAYMENT_PROCESSING_FEE: 0.029, // 2.9%
+  
+  // Escrow settings
+  ESCROW_RELEASE_DAYS: 7,
+  DISPUTE_RESOLUTION_DAYS: 14,
+  
+  // File upload limits
+  MAX_IMAGES_PER_LISTING: 10,
+  MAX_VIDEOS_PER_LISTING: 1,
+  MAX_3D_MODELS_PER_LISTING: 3,
+  MAX_FILE_SIZE_MB: 100,
+  MAX_IMAGE_SIZE_MB: 10,
+  MAX_VIDEO_SIZE_MB: 100,
+  MAX_3D_MODEL_SIZE_MB: 50,
+  
+  // Search and pagination
+  DEFAULT_PAGE_SIZE: 24,
+  MAX_PAGE_SIZE: 100,
+  MAX_SEARCH_RESULTS: 1000,
+  
+  // Rate limiting
+  RATE_LIMIT_WINDOW_MS: 15 * 60 * 1000, // 15 minutes
+  RATE_LIMIT_MAX_REQUESTS: 100,
+  
+  // Token expiration
+  ACCESS_TOKEN_EXPIRES_IN: '15m',
+  REFRESH_TOKEN_EXPIRES_IN: '7d',
+  EMAIL_VERIFICATION_EXPIRES_IN: '24h',
+  PASSWORD_RESET_EXPIRES_IN: '1h',
+  
+  // User limits
+  MAX_LISTINGS_PER_USER: 100,
+  MAX_CHATS_PER_USER: 50,
+  MAX_TRANSACTIONS_PER_DAY: 10,
+  
+  // Search settings
+  SIMILARITY_THRESHOLD: 0.7,
+  MAX_AUTOCOMPLETE_SUGGESTIONS: 10,
+  SEARCH_CACHE_TTL_SECONDS: 300, // 5 minutes
+  
+  // Vendor verification
+  VENDOR_VERIFICATION_REQUIRED_DOCUMENTS: [
+    'business_license',
+    'tax_id',
+    'identity_verification'
+  ]
 };
 
 // ================================
-// AI/ML CONFIGURATIONS
-// ================================
-
-const AI_CONFIG = {
-  IMAGE_EMBEDDING: {
-    MODEL_NAME: 'clip-vit-base-patch32',
-    EMBEDDING_SIZE: 512,
-    MAX_IMAGE_SIZE: 224, // pixels
-    SIMILARITY_THRESHOLD: 0.7
-  },
-  TEXT_EMBEDDING: {
-    MODEL_NAME: 'all-MiniLM-L6-v2',
-    EMBEDDING_SIZE: 384,
-    MAX_TEXT_LENGTH: 500,
-    SIMILARITY_THRESHOLD: 0.6
-  },
-  RECOMMENDATIONS: {
-    TRENDING_WEIGHT: 0.3,
-    POPULARITY_WEIGHT: 0.3,
-    SIMILARITY_WEIGHT: 0.4,
-    MAX_RECOMMENDATIONS: 20,
-    CACHE_DURATION: 3600 // 1 hour in seconds
-  },
-  FUZZY_SEARCH: {
-    THRESHOLD: 0.4,
-    MAX_RESULTS: 50,
-    INCLUDE_SCORE: true
-  }
-};
-
-// ================================
-// API CONFIGURATIONS
+// API CONFIGURATION
 // ================================
 
 const API_CONFIG = {
   VERSION: 'v1',
-  DEFAULT_PAGE_SIZE: 20,
-  MAX_PAGE_SIZE: 100,
-  RATE_LIMIT: {
-    WINDOW_MS: 15 * 60 * 1000, // 15 minutes
-    MAX_REQUESTS: 100,
-    AUTH_MAX_REQUESTS: 10
-  },
+  BASE_URL: process.env.API_BASE_URL || 'http://localhost:5000',
+  
+  // JWT Configuration
   JWT: {
-    ACCESS_TOKEN_EXPIRY: '15m',
-    REFRESH_TOKEN_EXPIRY: '7d',
     ISSUER: 'void-marketplace',
-    AUDIENCE: 'void-marketplace-users'
+    AUDIENCE: 'void-marketplace-users',
+    ALGORITHM: 'HS256'
   },
-  SEARCH: {
-    MIN_QUERY_LENGTH: 2,
-    MAX_QUERY_LENGTH: 100,
-    DEFAULT_LIMIT: 20,
-    MAX_LIMIT: 100
+  
+  // Database settings
+  DATABASE: {
+    CONNECTION_TIMEOUT: 10000,
+    QUERY_TIMEOUT: 30000,
+    MAX_CONNECTIONS: 100
+  },
+  
+  // File storage
+  STORAGE: {
+    TYPE: process.env.STORAGE_TYPE || 'local', // 'local' or 's3'
+    LOCAL_PATH: './uploads',
+    S3_BUCKET: process.env.AWS_S3_BUCKET,
+    CDN_URL: process.env.CDN_URL
+  },
+  
+  // External APIs
+  STRIPE: {
+    WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+    SUCCESS_URL: process.env.FRONTEND_URL + '/payment/success',
+    CANCEL_URL: process.env.FRONTEND_URL + '/payment/cancel'
+  },
+  
+  OPENAI: {
+    MODEL: 'text-embedding-ada-002',
+    MAX_TOKENS: 1000,
+    TEMPERATURE: 0.1
+  },
+  
+  HUGGINGFACE: {
+    BASE_URL: 'https://api-inference.huggingface.co/models',
+    AVAILABLE_MODELS: {
+      PRIMARY: 'sentence-transformers/all-MiniLM-L6-v2',
+      SECONDARY: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
+    },
+    ENDPOINT: '/feature-extraction',
+    TIMEOUT: 30000
+  },
+  
+  // Feature flags
+  FEATURES: {
+    ENABLE_AI_SEARCH: process.env.ENABLE_AI_SEARCH === 'true',
+    ENABLE_IMAGE_SEARCH: process.env.ENABLE_IMAGE_SEARCH === 'true',
+    ENABLE_3D_MODELS: process.env.ENABLE_3D_MODELS === 'true',
+    ENABLE_VIDEO_UPLOAD: process.env.ENABLE_VIDEO_UPLOAD === 'true',
+    ENABLE_REAL_TIME_CHAT: true,
+    ENABLE_NOTIFICATIONS: true,
+    ENABLE_ANALYTICS: true,
+    ENABLE_ADVANCED_FEATURES: process.env.NODE_ENV === 'production'
+  },
+  
+  // Cache settings
+  CACHE: {
+    REDIS_URL: process.env.REDIS_URL,
+    DEFAULT_TTL: 300, // 5 minutes
+    SEARCH_TTL: 600, // 10 minutes
+    USER_SESSION_TTL: 86400 // 24 hours
   }
 };
 
@@ -316,84 +266,214 @@ const API_CONFIG = {
 // ================================
 
 const ERROR_CODES = {
-  // Authentication
-  AUTH_INVALID_CREDENTIALS: 'AUTH_001',
-  AUTH_TOKEN_EXPIRED: 'AUTH_002',
-  AUTH_TOKEN_INVALID: 'AUTH_003',
-  AUTH_INSUFFICIENT_PERMISSIONS: 'AUTH_004',
-  AUTH_ACCOUNT_SUSPENDED: 'AUTH_005',
+  // Authentication errors
+  AUTH_TOKEN_INVALID: 'AUTH_TOKEN_INVALID',
+  AUTH_TOKEN_EXPIRED: 'AUTH_TOKEN_EXPIRED',
+  AUTH_TOKEN_MISSING: 'AUTH_TOKEN_MISSING',
+  AUTH_CREDENTIALS_INVALID: 'AUTH_CREDENTIALS_INVALID',
+  AUTH_INSUFFICIENT_PERMISSIONS: 'AUTH_INSUFFICIENT_PERMISSIONS',
+  AUTH_ACCOUNT_SUSPENDED: 'AUTH_ACCOUNT_SUSPENDED',
+  AUTH_EMAIL_NOT_VERIFIED: 'AUTH_EMAIL_NOT_VERIFIED',
   
-  // Validation
-  VALIDATION_FAILED: 'VAL_001',
-  VALIDATION_MISSING_FIELD: 'VAL_002',
-  VALIDATION_INVALID_FORMAT: 'VAL_003',
+  // Validation errors
+  VALIDATION_REQUIRED_FIELD: 'VALIDATION_REQUIRED_FIELD',
+  VALIDATION_INVALID_FORMAT: 'VALIDATION_INVALID_FORMAT',
+  VALIDATION_OUT_OF_RANGE: 'VALIDATION_OUT_OF_RANGE',
+  VALIDATION_DUPLICATE_VALUE: 'VALIDATION_DUPLICATE_VALUE',
   
-  // Resource
-  RESOURCE_NOT_FOUND: 'RES_001',
-  RESOURCE_ALREADY_EXISTS: 'RES_002',
-  RESOURCE_CONFLICT: 'RES_003',
+  // Business logic errors
+  BUSINESS_INSUFFICIENT_FUNDS: 'BUSINESS_INSUFFICIENT_FUNDS',
+  BUSINESS_LISTING_NOT_AVAILABLE: 'BUSINESS_LISTING_NOT_AVAILABLE',
+  BUSINESS_TRANSACTION_FAILED: 'BUSINESS_TRANSACTION_FAILED',
+  BUSINESS_ESCROW_ERROR: 'BUSINESS_ESCROW_ERROR',
   
-  // Upload
-  UPLOAD_FILE_TOO_LARGE: 'UPL_001',
-  UPLOAD_INVALID_TYPE: 'UPL_002',
-  UPLOAD_FAILED: 'UPL_003',
+  // File upload errors
+  FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+  FILE_INVALID_TYPE: 'FILE_INVALID_TYPE',
+  FILE_UPLOAD_FAILED: 'FILE_UPLOAD_FAILED',
+  FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   
-  // Business Logic
-  BUSINESS_INSUFFICIENT_FUNDS: 'BIZ_001',
-  BUSINESS_LISTING_LIMIT_EXCEEDED: 'BIZ_002',
-  BUSINESS_TRANSACTION_FAILED: 'BIZ_003'
+  // Database errors
+  DATABASE_CONNECTION_ERROR: 'DATABASE_CONNECTION_ERROR',
+  DATABASE_QUERY_ERROR: 'DATABASE_QUERY_ERROR',
+  DATABASE_CONSTRAINT_ERROR: 'DATABASE_CONSTRAINT_ERROR',
+  
+  // External service errors
+  EXTERNAL_API_ERROR: 'EXTERNAL_API_ERROR',
+  PAYMENT_GATEWAY_ERROR: 'PAYMENT_GATEWAY_ERROR',
+  EMAIL_SERVICE_ERROR: 'EMAIL_SERVICE_ERROR',
+  
+  // Rate limiting
+  RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED'
 };
 
 // ================================
-// NOTIFICATION TEMPLATES
+// VALIDATION PATTERNS
 // ================================
 
-const NOTIFICATION_TEMPLATES = {
-  [NOTIFICATION_TYPE.CHAT_MESSAGE]: {
-    title: 'New Message',
-    template: 'You have a new message from {senderName}'
+const VALIDATION_PATTERNS = {
+  EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  PHONE: /^\+?[\d\s\-\(\)]+$/,
+  USERNAME: /^[a-zA-Z0-9_]{3,30}$/,
+  SKU: /^[A-Z0-9\-_]{3,50}$/,
+  PASSWORD: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/,
+  CURRENCY: /^\d+(\.\d{1,2})?$/,
+  UUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+};
+
+// ================================
+// ALLOWED FILE TYPES
+// ================================
+
+const ALLOWED_FILE_TYPES = {
+  IMAGES: [
+    'image/jpeg',
+    'image/jpg', 
+    'image/png',
+    'image/webp',
+    'image/gif'
+  ],
+  VIDEOS: [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'video/x-msvideo' // .avi
+  ],
+  MODELS_3D: [
+    'model/gltf-binary', // .glb
+    'application/octet-stream', // .obj, .glb
+    'model/gltf+json' // .gltf
+  ],
+  DOCUMENTS: [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain'
+  ]
+};
+
+// ================================
+// ROLE PERMISSIONS MATRIX
+// ================================
+
+const ROLE_PERMISSIONS = {
+  [USER_ROLES.SUPER_ADMIN]: [
+    'users:read',
+    'users:write',
+    'users:delete',
+    'listings:read',
+    'listings:write',
+    'listings:delete',
+    'listings:approve',
+    'transactions:read',
+    'transactions:write',
+    'admin:access',
+    'system:manage'
+  ],
+  
+  [USER_ROLES.ADMIN]: [
+    'users:read',
+    'users:write',
+    'listings:read',
+    'listings:write',
+    'listings:approve',
+    'transactions:read',
+    'admin:access'
+  ],
+  
+  [USER_ROLES.MODERATOR]: [
+    'listings:read',
+    'listings:approve',
+    'users:read',
+    'admin:access'
+  ],
+  
+  [USER_ROLES.VENDOR]: [
+    'listings:read',
+    'listings:write',
+    'listings:own',
+    'transactions:read',
+    'transactions:own',
+    'chats:access',
+    'notifications:receive'
+  ],
+  
+  [USER_ROLES.USER]: [
+    'listings:read',
+    'transactions:read',
+    'transactions:own',
+    'chats:access',
+    'notifications:receive'
+  ]
+};
+
+// ================================
+// SUBSCRIPTION FEATURES
+// ================================
+
+const SUBSCRIPTION_FEATURES = {
+  [SUBSCRIPTION_PLAN.FREE]: {
+    max_listings: 5,
+    max_images_per_listing: 3,
+    priority_support: false,
+    analytics: false,
+    custom_branding: false,
+    api_access: false
   },
-  [NOTIFICATION_TYPE.OFFER_RECEIVED]: {
-    title: 'New Offer',
-    template: '{buyerName} made an offer of ${amount} for {listingTitle}'
+  
+  [SUBSCRIPTION_PLAN.BASIC]: {
+    max_listings: 25,
+    max_images_per_listing: 10,
+    priority_support: false,
+    analytics: true,
+    custom_branding: false,
+    api_access: false
   },
-  [NOTIFICATION_TYPE.OFFER_ACCEPTED]: {
-    title: 'Offer Accepted',
-    template: 'Your offer of ${amount} for {listingTitle} has been accepted'
+  
+  [SUBSCRIPTION_PLAN.PREMIUM]: {
+    max_listings: 100,
+    max_images_per_listing: 10,
+    priority_support: true,
+    analytics: true,
+    custom_branding: true,
+    api_access: true
   },
-  [NOTIFICATION_TYPE.OFFER_REJECTED]: {
-    title: 'Offer Declined',
-    template: 'Your offer of ${amount} for {listingTitle} has been declined'
-  },
-  [NOTIFICATION_TYPE.PAYMENT_RECEIVED]: {
-    title: 'Payment Received',
-    template: 'You received ${amount} for {listingTitle}'
-  },
-  [NOTIFICATION_TYPE.PRODUCT_SOLD]: {
-    title: 'Product Sold',
-    template: 'Your listing "{listingTitle}" has been sold'
+  
+  [SUBSCRIPTION_PLAN.ENTERPRISE]: {
+    max_listings: -1, // unlimited
+    max_images_per_listing: 10,
+    priority_support: true,
+    analytics: true,
+    custom_branding: true,
+    api_access: true
   }
 };
 
+// ================================
+// EXPORTS
+// ================================
+
 module.exports = {
+  // Core enums
   USER_ROLES,
-  ROLE_PERMISSIONS,
   USER_STATUS,
   LISTING_STATUS,
   LISTING_CONDITION,
   TRANSACTION_STATUS,
+  PAYMENT_METHODS,
   CHAT_STATUS,
   MESSAGE_TYPE,
   NOTIFICATION_TYPE,
-  INTERACTION_TYPE,
   SUBSCRIPTION_PLAN,
   SUBSCRIPTION_STATUS,
   PROMOTION_TYPE,
-  UPLOAD_LIMITS,
+  
+  // Configuration
   BUSINESS_RULES,
-  SUBSCRIPTION_FEATURES,
-  AI_CONFIG,
   API_CONFIG,
   ERROR_CODES,
-  NOTIFICATION_TEMPLATES
+  VALIDATION_PATTERNS,
+  ALLOWED_FILE_TYPES,
+  ROLE_PERMISSIONS,
+  SUBSCRIPTION_FEATURES
 };

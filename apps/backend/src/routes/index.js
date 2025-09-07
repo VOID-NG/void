@@ -1,157 +1,145 @@
 // apps/backend/src/routes/index.js
-// Central API router for VOID Marketplace - FIXED VERSION
+// Main routes configuration for VOID Marketplace API
 
 const express = require('express');
 const { API_CONFIG } = require('../config/constants');
 const logger = require('../utils/logger');
 
-// Import route modules
-const authRoutes = require('./authRoutes');
-const listingRoutes = require('./listingRoutes');
-
-// ✅ NEWLY IMPLEMENTED ROUTES
-const searchRoutes = require('./searchRoutes');
-const recommendationRoutes = require('./recommendationRoutes');
-
-// 🚧 ROUTES TO BE IMPLEMENTED SOON
-const chatRoutes = require('./chatRoutes');
-const messageRoutes = require('./messageRoutes');
-const transactionRoutes = require('./transactionRoutes');
-const { 
-  reviewRoutes, 
-  notificationRoutes, 
-  promotionRoutes, 
-  subscriptionRoutes, 
-  adminRoutes 
-} = require('./reviewRoutes');
-
-// Initialize router
 const router = express.Router();
 
 // ================================
-// MIDDLEWARE FOR ALL ROUTES
+// API INFORMATION & DOCUMENTATION
 // ================================
 
-// Request logging middleware
-router.use((req, res, next) => {
-  const start = Date.now();
-  
-  // Log request
-  logger.http(`${req.method} ${req.originalUrl}`, {
-    ip: req.ip,
-    userAgent: req.get('User-Agent'),
-    userId: req.user?.id || 'anonymous'
-  });
-  
-  // Log response on finish
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    logger.http(`${req.method} ${req.originalUrl} - ${res.statusCode}`, {
-      duration,
-      statusCode: res.statusCode,
-      userId: req.user?.id || 'anonymous'
-    });
-  });
-  
-  next();
-});
-
-// Add request timestamp
-router.use((req, res, next) => {
-  req.timestamp = new Date().toISOString();
-  next();
-});
-
-// ================================
-// API HEALTH CHECK
-// ================================
-
-router.get('/health', (req, res) => {
+/**
+ * @route   GET /api/v1
+ * @desc    API information and status
+ * @access  Public
+ */
+router.get('/', (req, res) => {
   res.json({
-    success: true,
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
+    name: 'VOID Marketplace API',
     version: API_CONFIG.VERSION,
+    description: 'Complete marketplace API with real-time chat, payments, and AI-powered search',
+    status: 'operational',
+    timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    uptime: process.uptime(),
     features: {
-      authentication: '✅ Active',
-      listings: '✅ Active',
-      search: '✅ Active',
-      recommendations: '✅ Active',
-      chat: '✅ Active',
-      transactions: '✅ Active',
-      reviews: '✅ Active',
-      notifications: '✅ Active',
-      promotions: '✅ Active',
-      subscriptions: '✅ Active',
-      admin: '✅ Active'
+      authentication: '✅ JWT-based auth with refresh tokens',
+      listings: '✅ Product CRUD with image/video/3D support',
+      search: '✅ Text + AI image search with embeddings',
+      chat: '✅ Real-time messaging with Socket.IO',
+      payments: '✅ Stripe integration with escrow',
+      notifications: '✅ Email, push, and in-app notifications',
+      admin: '✅ Complete admin dashboard API',
+      analytics: '✅ User behavior and search analytics'
+    },
+    endpoints: {
+      auth: '/auth',
+      listings: '/listings',
+      search: '/search',
+      chat: '/chat',
+      messages: '/messages',
+      transactions: '/transactions',
+      notifications: '/notifications',
+      admin: '/admin'
+    },
+    documentation: {
+      api_info: 'GET /',
+      health_check: 'GET /health',
+      endpoints_list: 'GET /docs/endpoints',
+      status_overview: 'GET /status'
     }
   });
 });
 
 // ================================
-// API DOCUMENTATION ENDPOINT
+// HEALTH CHECK & STATUS
 // ================================
 
-router.get('/docs', (req, res) => {
+/**
+ * @route   GET /api/v1/health
+ * @desc    API health check
+ * @access  Public
+ */
+router.get('/health', async (req, res) => {
+  try {
+    const { prisma } = require('../config/db');
+    
+    // Test database connection
+    await prisma.$queryRaw`SELECT 1`;
+    
+    res.json({
+      success: true,
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      version: API_CONFIG.VERSION,
+      services: {
+        api: 'operational',
+        database: 'connected',
+        redis: process.env.REDIS_URL ? 'configured' : 'not_configured',
+        email: process.env.EMAIL_SERVICE ? 'configured' : 'not_configured',
+        storage: process.env.AWS_S3_BUCKET ? 's3' : 'local',
+        search: process.env.OPENAI_API_KEY ? 'ai_enabled' : 'basic',
+        payments: process.env.STRIPE_SECRET_KEY ? 'stripe_enabled' : 'disabled'
+      },
+      uptime: process.uptime(),
+      memory_usage: process.memoryUsage(),
+      node_version: process.version
+    });
+  } catch (error) {
+    logger.error('Health check failed:', error);
+    res.status(503).json({
+      success: false,
+      status: 'unhealthy',
+      error: 'Service unavailable',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * @route   GET /api/v1/status
+ * @desc    Detailed API status
+ * @access  Public
+ */
+router.get('/status', (req, res) => {
   res.json({
-    name: 'VOID Marketplace API',
-    version: API_CONFIG.VERSION,
-    description: 'AI-powered marketplace platform with advanced search and recommendations',
-    documentation: {
-      postman: '/api/v1/docs/postman',
-      swagger: '/api/v1/docs/swagger',
-      endpoints: '/api/v1/docs/endpoints'
+    api: {
+      name: 'VOID Marketplace API',
+      version: API_CONFIG.VERSION,
+      status: 'operational',
+      environment: process.env.NODE_ENV || 'development'
     },
-    features: [
-      'User Authentication & Authorization ✅',
-      'Product Listings with Media Upload ✅',
-      'AI-Powered Search (HuggingFace) ✅',
-      'Smart Recommendations ✅',
-      'Real-time Chat & Negotiations ✅',
-      'Escrow Transaction System ✅',
-      'Review & Rating System ✅',
-      'Notifications & Alerts ✅',
-      'Promotions & Discounts ✅',
-      'Subscription Management ✅',
-      'Admin Dashboard API ✅'
-    ],
-    endpoints: {
+    routes: {
       auth: {
         base: '/auth',
-        description: 'Authentication and user management ✅',
-        methods: ['POST', 'GET', 'PUT', 'PATCH'],
+        description: 'User authentication and profile management ✅',
+        methods: ['GET', 'POST', 'PUT', 'PATCH'],
         status: 'Active'
       },
       listings: {
         base: '/listings',
-        description: 'Product listing management ✅',
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+        description: 'Product listings CRUD with media uploads ✅',
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
         status: 'Active'
       },
       search: {
         base: '/search',
-        description: 'AI-powered search with HuggingFace ✅',
+        description: 'Text and AI-powered image search ✅',
         methods: ['GET', 'POST'],
-        status: 'Active'
-      },
-      recommendations: {
-        base: '/recommendations',
-        description: 'AI-powered product recommendations ✅',
-        methods: ['GET'],
         status: 'Active'
       },
       chat: {
         base: '/chat',
-        description: 'Chat thread management ✅',
-        methods: ['GET', 'POST', 'PATCH'],
+        description: 'Real-time messaging system ✅',
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
         status: 'Active'
       },
       messages: {
         base: '/messages',
-        description: 'Chat message handling ✅',
-        methods: ['GET', 'POST', 'PUT'],
+        description: 'Message management with Socket.IO ✅',
+        methods: ['GET', 'POST', 'PUT', 'DELETE'],
         status: 'Active'
       },
       transactions: {
@@ -195,6 +183,109 @@ router.get('/docs', (req, res) => {
 });
 
 // ================================
+// LOAD FEATURE ROUTES
+// ================================
+
+try {
+  // Authentication routes
+  const authRoutes = require('./authRoutes');
+  router.use('/auth', authRoutes);
+  logger.info('✅ Auth routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load auth routes:', error.message);
+}
+
+try {
+  // Listing routes
+  const listingRoutes = require('./listingRoutes');
+  router.use('/listings', listingRoutes);
+  logger.info('✅ Listing routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load listing routes:', error.message);
+}
+
+try {
+  // Search routes
+  const searchRoutes = require('./searchRoutes');
+  router.use('/search', searchRoutes);
+  logger.info('✅ Search routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load search routes:', error.message);
+}
+
+try {
+  // Chat routes
+  const chatRoutes = require('./chatRoutes');
+  router.use('/chat', chatRoutes);
+  logger.info('✅ Chat routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load chat routes:', error.message);
+}
+
+try {
+  // Message routes
+  const messageRoutes = require('./messageRoutes');
+  router.use('/messages', messageRoutes);
+  logger.info('✅ Message routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load message routes:', error.message);
+}
+
+try {
+  // Transaction routes
+  const transactionRoutes = require('./transactionRoutes');
+  router.use('/transactions', transactionRoutes);
+  logger.info('✅ Transaction routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load transaction routes:', error.message);
+}
+
+try {
+  // Review routes
+  const reviewRoutes = require('./reviewRoutes');
+  router.use('/reviews', reviewRoutes);
+  logger.info('✅ Review routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load review routes:', error.message);
+}
+
+try {
+  // Notification routes
+  const notificationRoutes = require('./notificationRoutes');
+  router.use('/notifications', notificationRoutes);
+  logger.info('✅ Notification routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load notification routes:', error.message);
+}
+
+try {
+  // Promotion routes
+  const promotionRoutes = require('./promotionRoutes');
+  router.use('/promotions', promotionRoutes);
+  logger.info('✅ Promotion routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load promotion routes:', error.message);
+}
+
+try {
+  // Subscription routes
+  const subscriptionRoutes = require('./subscriptionRoutes');
+  router.use('/subscriptions', subscriptionRoutes);
+  logger.info('✅ Subscription routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load subscription routes:', error.message);
+}
+
+try {
+  // Admin routes
+  const adminRoutes = require('./adminRoutes');
+  router.use('/admin', adminRoutes);
+  logger.info('✅ Admin routes loaded');
+} catch (error) {
+  logger.error('❌ Failed to load admin routes:', error.message);
+}
+
+// ================================
 // API ENDPOINTS DOCUMENTATION
 // ================================
 
@@ -213,7 +304,7 @@ router.get('/docs/endpoints', (req, res) => {
       }
     },
     available_endpoints: {
-      // ✅ ACTIVE ENDPOINTS
+      // ✅ AUTHENTICATION ENDPOINTS
       'POST /auth/register': {
         description: 'Register new user account',
         authentication: false,
@@ -231,170 +322,394 @@ router.get('/docs/endpoints', (req, res) => {
         authentication: true,
         status: '✅ Active'
       },
+      'PATCH /auth/profile': {
+        description: 'Update user profile',
+        authentication: true,
+        body: ['first_name', 'last_name', 'bio', 'location'],
+        status: '✅ Active'
+      },
+      'POST /auth/refresh': {
+        description: 'Refresh access token',
+        authentication: false,
+        body: ['refreshToken'],
+        status: '✅ Active'
+      },
       'POST /auth/logout': {
-        description: 'User logout',
+        description: 'Logout user',
         authentication: true,
         status: '✅ Active'
       },
-      
-      // ✅ LISTING ENDPOINTS (ACTIVE)
+
+      // ✅ LISTING ENDPOINTS
       'GET /listings': {
-        description: 'Get paginated listings',
+        description: 'Get listings with filters',
         authentication: false,
-        query: ['page', 'limit', 'category', 'search', 'minPrice', 'maxPrice'],
+        query: ['category', 'min_price', 'max_price', 'location', 'page', 'limit'],
         status: '✅ Active'
       },
       'POST /listings': {
         description: 'Create new listing',
         authentication: true,
-        body: ['title', 'description', 'price', 'category_id'],
-        files: ['images', 'videos', 'models'],
+        role: 'VENDOR',
+        body: ['title', 'description', 'price', 'condition', 'category_id'],
+        files: ['images', 'videos', 'models_3d'],
         status: '✅ Active'
       },
       'GET /listings/:id': {
-        description: 'Get listing details',
+        description: 'Get listing by ID',
         authentication: false,
         status: '✅ Active'
       },
       'PUT /listings/:id': {
         description: 'Update listing',
         authentication: true,
-        ownership: 'vendor_id',
+        ownership: 'vendor_only',
         status: '✅ Active'
       },
-      
-      // ✅ SEARCH ENDPOINTS (NOW ACTIVE)
+      'DELETE /listings/:id': {
+        description: 'Delete listing',
+        authentication: true,
+        ownership: 'vendor_or_admin',
+        status: '✅ Active'
+      },
+
+      // ✅ SEARCH ENDPOINTS
       'GET /search': {
-        description: 'AI-powered text search',
+        description: 'Text search with filters',
         authentication: false,
-        query: ['q', 'page', 'limit', 'filters'],
-        status: '✅ Active'
-      },
-      'POST /search/image': {
-        description: 'AI-powered image search',
-        authentication: false,
-        files: ['image'],
-        status: '✅ Active'
-      },
-      'GET /search/recommendations': {
-        description: 'Get AI recommendations',
-        authentication: false,
+        query: ['q', 'category', 'min_price', 'max_price', 'sort_by'],
         status: '✅ Active'
       },
       'GET /search/autocomplete': {
-        description: 'Search autocomplete',
+        description: 'Search autocomplete suggestions',
         authentication: false,
+        query: ['q', 'limit'],
         status: '✅ Active'
       },
-      
-      // ✅ OTHER ENDPOINTS (NOW ACTIVE)
+      'POST /search/image': {
+        description: 'Image-based search',
+        authentication: false,
+        files: ['image'],
+        body: ['category', 'similarity_threshold'],
+        status: '✅ Active'
+      },
+      'POST /search/image-url': {
+        description: 'Search by image URL',
+        authentication: false,
+        body: ['image_url', 'category', 'similarity_threshold'],
+        status: '✅ Active'
+      },
+
+      // ✅ CHAT ENDPOINTS
       'GET /chat': {
-        description: 'Get user chat threads',
+        description: 'Get user chats',
         authentication: true,
+        query: ['page', 'limit', 'status'],
         status: '✅ Active'
       },
+      'POST /chat': {
+        description: 'Create chat for listing',
+        authentication: true,
+        body: ['listing_id', 'vendor_id', 'initial_message'],
+        status: '✅ Active'
+      },
+      'GET /chat/:id': {
+        description: 'Get chat details',
+        authentication: true,
+        ownership: 'participant_only',
+        status: '✅ Active'
+      },
+      'PATCH /chat/:id/status': {
+        description: 'Update chat status',
+        authentication: true,
+        body: ['status'],
+        status: '✅ Active'
+      },
+
+      // ✅ MESSAGE ENDPOINTS
+      'POST /messages': {
+        description: 'Send message',
+        authentication: true,
+        body: ['chat_id', 'content', 'type', 'offer_amount'],
+        status: '✅ Active'
+      },
+      'GET /messages/:chatId': {
+        description: 'Get chat messages',
+        authentication: true,
+        query: ['page', 'limit', 'before_message_id'],
+        status: '✅ Active'
+      },
+      'PUT /messages/:id': {
+        description: 'Edit message',
+        authentication: true,
+        ownership: 'sender_only',
+        body: ['content'],
+        status: '✅ Active'
+      },
+      'DELETE /messages/:id': {
+        description: 'Delete message',
+        authentication: true,
+        ownership: 'sender_only',
+        status: '✅ Active'
+      },
+
+      // ✅ TRANSACTION ENDPOINTS
       'POST /transactions': {
-        description: 'Create new transaction',
+        description: 'Create transaction',
         authentication: true,
-        body: ['listing_id', 'quantity', 'offer_amount'],
+        body: ['listing_id', 'vendor_id', 'amount', 'payment_method_id'],
         status: '✅ Active'
       },
+      'GET /transactions': {
+        description: 'Get user transactions',
+        authentication: true,
+        query: ['page', 'limit', 'status_filter', 'role_filter'],
+        status: '✅ Active'
+      },
+      'GET /transactions/:id': {
+        description: 'Get transaction details',
+        authentication: true,
+        ownership: 'participant_only',
+        status: '✅ Active'
+      },
+      'POST /transactions/:id/process-payment': {
+        description: 'Process payment',
+        authentication: true,
+        body: ['payment_method_id', 'billing_address'],
+        status: '✅ Active'
+      },
+      'POST /transactions/:id/release-escrow': {
+        description: 'Release escrow funds',
+        authentication: true,
+        role: 'buyer_or_admin',
+        status: '✅ Active'
+      },
+
+      // ✅ NOTIFICATION ENDPOINTS
+      'GET /notifications': {
+        description: 'Get user notifications',
+        authentication: true,
+        query: ['page', 'limit', 'type', 'status', 'category'],
+        status: '✅ Active'
+      },
+      'GET /notifications/unread-count': {
+        description: 'Get unread notification count',
+        authentication: true,
+        status: '✅ Active'
+      },
+      'PATCH /notifications/:id/read': {
+        description: 'Mark notification as read',
+        authentication: true,
+        status: '✅ Active'
+      },
+      'PATCH /notifications/mark-all-read': {
+        description: 'Mark all notifications as read',
+        authentication: true,
+        body: ['category', 'type'],
+        status: '✅ Active'
+      },
+
+      // ✅ ADMIN ENDPOINTS
       'GET /admin/users': {
         description: 'Get all users',
         authentication: true,
         role: 'ADMIN',
+        query: ['page', 'limit', 'role', 'status'],
+        status: '✅ Active'
+      },
+      'PATCH /admin/users/:id': {
+        description: 'Update user (block/verify/promote)',
+        authentication: true,
+        role: 'ADMIN',
+        body: ['action', 'reason', 'new_role'],
+        status: '✅ Active'
+      },
+      'GET /admin/listings': {
+        description: 'Get all listings for review',
+        authentication: true,
+        role: 'MODERATOR',
+        query: ['status', 'page', 'limit'],
+        status: '✅ Active'
+      },
+      'PATCH /admin/listings/:id': {
+        description: 'Approve/reject listing',
+        authentication: true,
+        role: 'MODERATOR',
+        body: ['action', 'reason'],
+        status: '✅ Active'
+      },
+      'GET /admin/transactions': {
+        description: 'Get all transactions',
+        authentication: true,
+        role: 'ADMIN',
+        query: ['status', 'page', 'limit', 'start_date', 'end_date'],
+        status: '✅ Active'
+      },
+      'GET /admin/analytics': {
+        description: 'Get system analytics',
+        authentication: true,
+        role: 'ADMIN',
+        query: ['period', 'metrics'],
         status: '✅ Active'
       }
+    },
+    real_time_features: {
+      'Socket.IO Events': {
+        'join_user_room': 'Join personal notification room',
+        'join_chat': 'Join specific chat room',
+        'send_message': 'Send real-time message',
+        'typing_start': 'Start typing indicator',
+        'typing_stop': 'Stop typing indicator',
+        'mark_messages_read': 'Mark messages as read'
+      }
+    },
+    file_uploads: {
+      'Listing Images': 'Up to 10 images, max 10MB each (JPEG, PNG, WebP)',
+      'Listing Videos': 'Up to 1 video, max 100MB (MP4, WebM)',
+      '3D Models': 'Up to 3 models, max 50MB each (GLB, OBJ)',
+      'User Avatar': '1 image, max 5MB (JPEG, PNG, WebP)',
+      'Search Images': 'Any image for visual search (JPEG, PNG, WebP)'
+    },
+    error_handling: {
+      'Format': 'Consistent JSON error responses',
+      'Codes': 'Specific error codes for different scenarios',
+      'Validation': 'Detailed validation error messages',
+      'Rate Limiting': '100 requests per 15 minutes in production'
     }
   });
 });
 
 // ================================
-// MOUNT ROUTE MODULES
+// DEVELOPMENT/TESTING ROUTES
 // ================================
 
-// ✅ FULLY ACTIVE ROUTES
-router.use('/auth', authRoutes);
-router.use('/listings', listingRoutes);
-
-// ✅ NEWLY IMPLEMENTED ROUTES  
-router.use('/search', searchRoutes);
-router.use('/recommendations', recommendationRoutes);
-
-// ✅ BUSINESS LOGIC ROUTES (IMPLEMENTED BELOW)
-router.use('/chat', chatRoutes);
-router.use('/messages', messageRoutes);
-router.use('/transactions', transactionRoutes);
-router.use('/reviews', reviewRoutes);
-router.use('/notifications', notificationRoutes);
-router.use('/promotions', promotionRoutes);
-router.use('/subscriptions', subscriptionRoutes);
-router.use('/admin', adminRoutes);
-
-// ================================
-// ERROR HANDLING FOR ROUTES
-// ================================
-
-// Handle 404 for unmatched API routes
-router.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'API endpoint not found',
-    message: `The endpoint ${req.method} ${req.originalUrl} does not exist`,
-    availableEndpoints: '/api/v1/docs/endpoints',
-    activeFeatures: {
-      auth: '✅ /api/v1/auth/*',
-      listings: '✅ /api/v1/listings/*',
-      search: '✅ /api/v1/search/*',
-      recommendations: '✅ /api/v1/recommendations/*',
-      chat: '✅ /api/v1/chat/*',
-      transactions: '✅ /api/v1/transactions/*',
-      admin: '✅ /api/v1/admin/*'
-    }
-  });
-});
-
-// ================================
-// ROUTE STATISTICS MIDDLEWARE
-// ================================
-
-// Track API usage statistics
-const routeStats = new Map();
-
-router.use((req, res, next) => {
-  const route = `${req.method} ${req.route?.path || req.path}`;
-  const current = routeStats.get(route) || { count: 0, lastAccessed: null };
-  
-  routeStats.set(route, {
-    count: current.count + 1,
-    lastAccessed: new Date()
-  });
-  
-  next();
-});
-
-// Endpoint to get route statistics (for monitoring)
-router.get('/stats', (req, res) => {
-  // Only allow admins to see stats
-  if (!req.user || !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: 'Admin access required'
+if (process.env.NODE_ENV === 'development' || process.env.ENABLE_TEST_ROUTES === 'true') {
+  /**
+   * @route   GET /api/v1/dev/test-accounts
+   * @desc    Get test account information
+   * @access  Development only
+   */
+  router.get('/dev/test-accounts', (req, res) => {
+    res.json({
+      message: 'Test accounts for development',
+      accounts: [
+        {
+          role: 'SUPER_ADMIN',
+          email: process.env.ADMIN_EMAIL || 'admin@voidmarketplace.com',
+          password: 'Contact admin for password',
+          description: 'System administrator account'
+        },
+        {
+          role: 'VENDOR',
+          email: 'vendor@test.com',
+          password: 'TestUser123!',
+          description: 'Test vendor account with sample listings'
+        },
+        {
+          role: 'USER',
+          email: 'buyer@test.com',
+          password: 'TestUser123!',
+          description: 'Test buyer account'
+        }
+      ],
+      note: 'These accounts are created automatically during database seeding in development'
     });
-  }
+  });
 
-  const stats = Array.from(routeStats.entries()).map(([route, data]) => ({
-    route,
-    ...data
-  }));
+  /**
+   * @route   POST /api/v1/dev/create-test-user
+   * @desc    Create test user
+   * @access  Development only
+   */
+  router.post('/dev/create-test-user', async (req, res) => {
+    try {
+      const { prisma } = require('../config/db');
+      const bcrypt = require('bcryptjs');
+
+      const { email, role = 'USER' } = req.body;
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email is required'
+        });
+      }
+
+      const password = 'TestUser123!';
+      const hashedPassword = await bcrypt.hash(password, 12);
+
+      const user = await prisma.user.create({
+        data: {
+          email,
+          username: email.split('@')[0],
+          password_hash: hashedPassword,
+          first_name: 'Test',
+          last_name: 'User',
+          role,
+          status: 'ACTIVE',
+          is_verified: true
+        },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          created_at: true
+        }
+      });
+
+      res.json({
+        success: true,
+        message: 'Test user created',
+        user,
+        login_credentials: {
+          email,
+          password
+        }
+      });
+
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        error: 'Failed to create test user',
+        message: error.message
+      });
+    }
+  });
+}
+
+// ================================
+// API METRICS & MONITORING
+// ================================
+
+/**
+ * @route   GET /api/v1/metrics
+ * @desc    API metrics and usage statistics
+ * @access  Public (basic metrics only)
+ */
+router.get('/metrics', (req, res) => {
+  const uptime = process.uptime();
+  const memoryUsage = process.memoryUsage();
 
   res.json({
-    success: true,
-    data: {
-      route_statistics: stats,
-      total_requests: stats.reduce((sum, stat) => sum + stat.count, 0),
-      generated_at: new Date().toISOString()
-    }
+    api: {
+      uptime_seconds: Math.floor(uptime),
+      uptime_human: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+      version: API_CONFIG.VERSION,
+      environment: process.env.NODE_ENV
+    },
+    system: {
+      memory: {
+        used_mb: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+        total_mb: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+        external_mb: Math.round(memoryUsage.external / 1024 / 1024)
+      },
+      process: {
+        pid: process.pid,
+        node_version: process.version,
+        platform: process.platform
+      }
+    },
+    timestamp: new Date().toISOString()
   });
 });
 

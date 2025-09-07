@@ -1,13 +1,48 @@
 // apps/backend/src/services/authService.js
-// Authentication service layer for VOID Marketplace
+// Complete Authentication service layer for VOID Marketplace
 
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { prisma } = require('../config/db');
 const { USER_ROLES, USER_STATUS, ERROR_CODES } = require('../config/constants');
-const { generateTokenPair, generateEmailVerificationToken, generatePasswordResetToken } = require('../utils/tokenUtils');
-const { AuthenticationError, ConflictError, NotFoundError, ValidationError } = require('../middleware/errorMiddleware');
+const { generateTokenPair, generateEmailVerificationToken, generatePasswordResetToken, verifyPasswordResetToken } = require('../utils/tokenUtils');
 const logger = require('../utils/logger');
+
+// ================================
+// CUSTOM ERROR CLASSES
+// ================================
+
+class AuthenticationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AuthenticationError';
+    this.statusCode = 401;
+  }
+}
+
+class ConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConflictError';
+    this.statusCode = 409;
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NotFoundError';
+    this.statusCode = 404;
+  }
+}
+
+class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ValidationError';
+    this.statusCode = 400;
+  }
+}
 
 // ================================
 // USER REGISTRATION
@@ -33,6 +68,22 @@ const registerUser = async (userData) => {
   } = userData;
 
   try {
+    // Validate required fields
+    if (!email || !username || !password || !first_name || !last_name) {
+      throw new ValidationError('Missing required fields: email, username, password, first_name, last_name');
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      throw new ValidationError('Invalid email format');
+    }
+
+    // Validate password strength
+    if (password.length < 8) {
+      throw new ValidationError('Password must be at least 8 characters long');
+    }
+
     // Check if user already exists
     const existingUser = await prisma.user.findFirst({
       where: {
@@ -91,7 +142,6 @@ const registerUser = async (userData) => {
     // Generate email verification token
     const emailVerificationToken = generateEmailVerificationToken(user.id, user.email);
 
-    // Log registration
     logger.info('User registered successfully', {
       userId: user.id,
       email: user.email,
@@ -123,6 +173,10 @@ const registerUser = async (userData) => {
  */
 const loginUser = async (identifier, password, userAgent, ipAddress) => {
   try {
+    if (!identifier || !password) {
+      throw new ValidationError('Email/username and password are required');
+    }
+
     // Find user by email or username
     const user = await prisma.user.findFirst({
       where: {
@@ -137,19 +191,15 @@ const loginUser = async (identifier, password, userAgent, ipAddress) => {
       throw new AuthenticationError('Invalid credentials');
     }
 
+    // Check if account is active
+    if (user.status === USER_STATUS.BANNED || user.status === USER_STATUS.SUSPENDED) {
+      throw new AuthenticationError('Account is suspended or banned');
+    }
+
     // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
       throw new AuthenticationError('Invalid credentials');
-    }
-
-    // Check user status
-    if (user.status === USER_STATUS.BANNED) {
-      throw new AuthenticationError('Account has been permanently banned');
-    }
-
-    if (user.status === USER_STATUS.SUSPENDED) {
-      throw new AuthenticationError('Account is temporarily suspended');
     }
 
     // Update last login
@@ -168,12 +218,11 @@ const loginUser = async (identifier, password, userAgent, ipAddress) => {
     // Remove sensitive data
     const { password_hash, ...userWithoutPassword } = user;
 
-    // Log successful login
-    logger.info('User logged in successfully', {
+    logger.info('User login successful', {
       userId: user.id,
       email: user.email,
-      userAgent,
-      ipAddress
+      ipAddress,
+      userAgent: userAgent?.substring(0, 100)
     });
 
     return {
@@ -181,133 +230,61 @@ const loginUser = async (identifier, password, userAgent, ipAddress) => {
       tokens
     };
   } catch (error) {
-    logger.error('User login failed:', {
-      identifier,
-      error: error.message,
-      userAgent,
-      ipAddress
-    });
+    logger.error('User login failed:', error);
     throw error;
   }
 };
 
 // ================================
-// PASSWORD MANAGEMENT
+// TOKEN MANAGEMENT
 // ================================
 
 /**
- * Change user password
- * @param {string} userId - User ID
- * @param {string} currentPassword - Current password
- * @param {string} newPassword - New password
- * @returns {boolean} Success status
+ * Refresh access token
+ * @param {string} refreshToken - Refresh token
+ * @returns {Object} New tokens
  */
-const changePassword = async (userId, currentPassword, newPassword) => {
+const refreshAccessToken = async (refreshToken) => {
   try {
+    if (!refreshToken) {
+      throw new AuthenticationError('Refresh token is required');
+    }
+
+    // Verify refresh token (implement in tokenUtils)
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    
     // Get user
     const user = await prisma.user.findUnique({
-      where: { id: userId }
-    });
-
-    if (!user) {
-      throw new NotFoundError('User not found');
-    }
-
-    // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
-    if (!isCurrentPasswordValid) {
-      throw new AuthenticationError('Current password is incorrect');
-    }
-
-    // Hash new password
-    const salt = await bcrypt.genSalt(12);
-    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
-
-    // Update password
-    await prisma.user.update({
-      where: { id: userId },
-      data: { 
-        password_hash: hashedNewPassword,
-        updated_at: new Date()
+      where: { id: decoded.userId },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true
       }
     });
 
-    logger.info('Password changed successfully', { userId });
-    return true;
-  } catch (error) {
-    logger.error('Password change failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Request password reset
- * @param {string} email - User email
- * @returns {string} Password reset token
- */
-const requestPasswordReset = async (email) => {
-  try {
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase() }
-    });
-
     if (!user) {
-      // Don't reveal if email exists
-      logger.warn('Password reset requested for non-existent email', { email });
-      return null;
+      throw new AuthenticationError('User not found');
     }
 
-    // Generate reset token
-    const resetToken = generatePasswordResetToken(user.id, user.email);
-
-    logger.info('Password reset requested', { userId: user.id, email });
-    return resetToken;
-  } catch (error) {
-    logger.error('Password reset request failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Reset password using token
- * @param {string} resetToken - Password reset token
- * @param {string} newPassword - New password
- * @returns {boolean} Success status
- */
-const resetPassword = async (resetToken, newPassword) => {
-  try {
-    // Verify reset token (this will throw if invalid/expired)
-    const { verifyPasswordResetToken } = require('../utils/tokenUtils');
-    const decoded = verifyPasswordResetToken(resetToken);
-
-    // Get user
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    });
-
-    if (!user || user.email !== decoded.email) {
-      throw new AuthenticationError('Invalid or expired reset token');
+    if (user.status !== USER_STATUS.ACTIVE) {
+      throw new AuthenticationError('User account is not active');
     }
 
-    // Hash new password
-    const salt = await bcrypt.genSalt(12);
-    const hashedPassword = await bcrypt.hash(newPassword, salt);
-
-    // Update password
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { 
-        password_hash: hashedPassword,
-        updated_at: new Date()
-      }
+    // Generate new tokens
+    const tokens = generateTokenPair({
+      userId: user.id,
+      email: user.email,
+      role: user.role
     });
 
-    logger.info('Password reset successfully', { userId: user.id });
-    return true;
+    logger.info('Token refreshed successfully', { userId: user.id });
+
+    return tokens;
   } catch (error) {
-    logger.error('Password reset failed:', error);
-    throw error;
+    logger.error('Token refresh failed:', error);
+    throw new AuthenticationError('Invalid or expired refresh token');
   }
 };
 
@@ -316,33 +293,40 @@ const resetPassword = async (resetToken, newPassword) => {
 // ================================
 
 /**
- * Verify user email
- * @param {string} verificationToken - Email verification token
- * @returns {Object} User data
+ * Verify email address
+ * @param {string} token - Email verification token
+ * @returns {Object} Updated user data
  */
-const verifyEmail = async (verificationToken) => {
+const verifyEmail = async (token) => {
   try {
-    // Verify token
-    const { verifyEmailVerificationToken } = require('../utils/tokenUtils');
-    const decoded = verifyEmailVerificationToken(verificationToken);
+    if (!token) {
+      throw new ValidationError('Verification token is required');
+    }
+
+    // Verify token format and extract data
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    if (decoded.type !== 'email_verification') {
+      throw new ValidationError('Invalid token type');
+    }
 
     // Get user
     const user = await prisma.user.findUnique({
       where: { id: decoded.userId }
     });
 
-    if (!user || user.email !== decoded.email) {
-      throw new AuthenticationError('Invalid or expired verification token');
+    if (!user) {
+      throw new NotFoundError('User not found');
     }
 
     if (user.is_verified) {
       throw new ValidationError('Email is already verified');
     }
 
-    // Update user verification status
+    // Update user status
     const updatedUser = await prisma.user.update({
       where: { id: user.id },
-      data: { 
+      data: {
         is_verified: true,
         email_verified_at: new Date(),
         status: user.status === USER_STATUS.PENDING_VERIFICATION ? USER_STATUS.ACTIVE : user.status,
@@ -402,6 +386,148 @@ const resendEmailVerification = async (userId) => {
 };
 
 // ================================
+// PASSWORD MANAGEMENT
+// ================================
+
+/**
+ * Request password reset
+ * @param {string} email - User email
+ * @returns {string|null} Reset token or null if user not found
+ */
+const requestPasswordReset = async (email) => {
+  try {
+    // Find user by email
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      // Don't reveal if user exists for security
+      return null;
+    }
+
+    // Generate reset token
+    const resetToken = generatePasswordResetToken(user.id, user.email);
+
+    logger.info('Password reset requested', { userId: user.id, email });
+    return resetToken;
+  } catch (error) {
+    logger.error('Password reset request failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Reset password with token
+ * @param {string} token - Reset token
+ * @param {string} newPassword - New password
+ * @returns {Object} Success result
+ */
+const resetPassword = async (token, newPassword) => {
+  try {
+    if (!token || !newPassword) {
+      throw new ValidationError('Reset token and new password are required');
+    }
+
+    // Validate password strength
+    if (newPassword.length < 8) {
+      throw new ValidationError('Password must be at least 8 characters long');
+    }
+
+    // Verify reset token
+    const isValidToken = verifyPasswordResetToken(token);
+    if (!isValidToken) {
+      throw new ValidationError('Invalid or expired reset token');
+    }
+
+    // Extract user ID from token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.userId }
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password_hash: hashedPassword,
+        updated_at: new Date()
+      }
+    });
+
+    logger.info('Password reset successfully', { userId: user.id });
+    return { success: true };
+  } catch (error) {
+    logger.error('Password reset failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Change password for authenticated user
+ * @param {string} userId - User ID
+ * @param {string} currentPassword - Current password
+ * @param {string} newPassword - New password
+ * @returns {Object} Success result
+ */
+const changePassword = async (userId, currentPassword, newPassword) => {
+  try {
+    if (!currentPassword || !newPassword) {
+      throw new ValidationError('Current password and new password are required');
+    }
+
+    // Validate new password strength
+    if (newPassword.length < 8) {
+      throw new ValidationError('New password must be at least 8 characters long');
+    }
+
+    // Get user
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isCurrentPasswordValid) {
+      throw new AuthenticationError('Current password is incorrect');
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(12);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update password
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        password_hash: hashedPassword,
+        updated_at: new Date()
+      }
+    });
+
+    logger.info('Password changed successfully', { userId });
+    return { success: true };
+  } catch (error) {
+    logger.error('Password change failed:', error);
+    throw error;
+  }
+};
+
+// ================================
 // PROFILE MANAGEMENT
 // ================================
 
@@ -431,12 +557,8 @@ const getUserProfile = async (userId) => {
         business_name: true,
         business_address: true,
         created_at: true,
-        last_login: true,
-        _count: {
-          listings: true,
-          reviews_received: true,
-          transactions_vendor: true
-        }
+        updated_at: true,
+        last_login: true
       }
     });
 
@@ -471,11 +593,11 @@ const updateUserProfile = async (userId, updateData) => {
 
     // Filter allowed fields
     const filteredData = {};
-    for (const field of allowedFields) {
-      if (updateData[field] !== undefined) {
-        filteredData[field] = updateData[field];
+    Object.keys(updateData).forEach(key => {
+      if (allowedFields.includes(key) && updateData[key] !== undefined) {
+        filteredData[key] = updateData[key];
       }
-    }
+    });
 
     if (Object.keys(filteredData).length === 0) {
       throw new ValidationError('No valid fields to update');
@@ -509,7 +631,7 @@ const updateUserProfile = async (userId, updateData) => {
       }
     });
 
-    logger.info('User profile updated', { userId, updatedFields: Object.keys(filteredData) });
+    logger.info('User profile updated', { userId });
     return updatedUser;
   } catch (error) {
     logger.error('Update user profile failed:', error);
@@ -517,94 +639,110 @@ const updateUserProfile = async (userId, updateData) => {
   }
 };
 
-// ================================
-// TOKEN REFRESH
-// ================================
-
 /**
- * Refresh access token
- * @param {string} refreshToken - Refresh token
- * @returns {Object} New tokens
+ * Update user avatar
+ * @param {string} userId - User ID
+ * @param {string} avatarUrl - Avatar URL
+ * @returns {Object} Updated user data
  */
-const refreshAccessToken = async (refreshToken) => {
+const updateUserAvatar = async (userId, avatarUrl) => {
   try {
-    const { verifyRefreshToken, refreshAccessToken: generateNewTokens } = require('../utils/tokenUtils');
-    
-    // Verify refresh token
-    const decoded = verifyRefreshToken(refreshToken);
-
-    // Get current user data
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        avatar_url: avatarUrl,
+        updated_at: new Date()
+      },
       select: {
         id: true,
-        email: true,
-        role: true,
-        status: true
+        avatar_url: true,
+        updated_at: true
       }
     });
 
-    if (!user) {
-      throw new AuthenticationError('User not found');
-    }
-
-    if (user.status === USER_STATUS.BANNED || user.status === USER_STATUS.SUSPENDED) {
-      throw new AuthenticationError('Account is not active');
-    }
-
-    // Generate new token pair
-    const newTokens = generateNewTokens(refreshToken, {
-      userId: user.id,
-      email: user.email,
-      role: user.role
-    });
-
-    logger.info('Access token refreshed', { userId: user.id });
-    return newTokens;
+    logger.info('User avatar updated', { userId, avatarUrl });
+    return updatedUser;
   } catch (error) {
-    logger.error('Token refresh failed:', error);
+    logger.error('Update user avatar failed:', error);
     throw error;
   }
 };
 
 // ================================
-// ACCOUNT DEACTIVATION
+// VENDOR MANAGEMENT
 // ================================
 
 /**
- * Deactivate user account
+ * Request vendor verification
  * @param {string} userId - User ID
- * @param {string} reason - Deactivation reason
- * @returns {boolean} Success status
+ * @param {Object} verificationData - Verification documents and data
+ * @returns {Object} Verification request result
  */
-const deactivateAccount = async (userId, reason = 'User requested') => {
+const requestVendorVerification = async (userId, verificationData) => {
   try {
-    await prisma.user.update({
+    const user = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    if (user.role !== USER_ROLES.VENDOR) {
+      throw new ValidationError('Only vendors can request verification');
+    }
+
+    if (user.vendor_verified) {
+      throw new ValidationError('Vendor is already verified');
+    }
+
+    // Update user with verification request
+    const updatedUser = await prisma.user.update({
       where: { id: userId },
       data: {
-        status: USER_STATUS.SUSPENDED,
+        status: USER_STATUS.PENDING_VERIFICATION,
         updated_at: new Date()
       }
     });
 
-    logger.info('Account deactivated', { userId, reason });
-    return true;
+    logger.info('Vendor verification requested', { userId });
+    return { success: true, status: 'pending' };
   } catch (error) {
-    logger.error('Account deactivation failed:', error);
+    logger.error('Vendor verification request failed:', error);
     throw error;
   }
 };
 
+// ================================
+// EXPORTS
+// ================================
+
 module.exports = {
+  // User management
   registerUser,
   loginUser,
-  changePassword,
-  requestPasswordReset,
-  resetPassword,
-  verifyEmail,
-  resendEmailVerification,
   getUserProfile,
   updateUserProfile,
+  updateUserAvatar,
+
+  // Token management
   refreshAccessToken,
-  deactivateAccount
+
+  // Email verification
+  verifyEmail,
+  resendEmailVerification,
+
+  // Password management
+  requestPasswordReset,
+  resetPassword,
+  changePassword,
+
+  // Vendor management
+  requestVendorVerification,
+
+  // Error classes for external use
+  AuthenticationError,
+  ConflictError,
+  NotFoundError,
+  ValidationError
 };

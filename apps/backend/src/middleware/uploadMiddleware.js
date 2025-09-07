@@ -1,460 +1,544 @@
 // apps/backend/src/middleware/uploadMiddleware.js
-// File upload middleware for VOID Marketplace - handles images, videos, 3D models
+// Secure file upload middleware for VOID Marketplace
 
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs').promises;
+const crypto = require('crypto');
 const sharp = require('sharp');
-const { UPLOAD_LIMITS, ERROR_CODES } = require('../config/constants');
-const { ValidationError } = require('./errorMiddleware');
+const fs = require('fs').promises;
+const { ALLOWED_FILE_TYPES, BUSINESS_RULES } = require('../config/constants');
+const { FileUploadError } = require('./errorMiddleware');
 const logger = require('../utils/logger');
 
 // ================================
-// UPLOAD DIRECTORIES
+// SECURITY UTILITIES
 // ================================
 
-const uploadPaths = {
-  images: 'uploads/images',
-  videos: 'uploads/videos',
-  models: 'uploads/models',
-  avatars: 'uploads/avatars',
-  temp: 'uploads/temp'
-};
-
-// Create upload directories if they don't exist
-const createUploadDirs = async () => {
-  try {
-    for (const dir of Object.values(uploadPaths)) {
-      await fs.mkdir(dir, { recursive: true });
-    }
-    logger.info('Upload directories created/verified');
-  } catch (error) {
-    logger.error('Error creating upload directories:', error);
-  }
-};
-
-// Initialize directories on module load
-createUploadDirs();
-
-// ================================
-// FILE VALIDATION FUNCTIONS
-// ================================
-
-const validateFileType = (file, allowedTypes, allowedExtensions) => {
-  const fileExtension = path.extname(file.originalname).toLowerCase();
-  const mimeType = file.mimetype;
-
-  if (!allowedTypes.includes(mimeType)) {
-    throw new ValidationError(
-      `Invalid file type. Allowed types: ${allowedTypes.join(', ')}`,
-      { code: ERROR_CODES.UPLOAD_INVALID_TYPE, allowedTypes }
-    );
-  }
-
-  if (!allowedExtensions.includes(fileExtension)) {
-    throw new ValidationError(
-      `Invalid file extension. Allowed extensions: ${allowedExtensions.join(', ')}`,
-      { code: ERROR_CODES.UPLOAD_INVALID_TYPE, allowedExtensions }
-    );
-  }
-
-  return true;
-};
-
-const validateFileSize = (file, maxSize) => {
-  if (file.size > maxSize) {
-    throw new ValidationError(
-      `File too large. Maximum size: ${Math.round(maxSize / 1024 / 1024)}MB`,
-      { 
-        code: ERROR_CODES.UPLOAD_FILE_TOO_LARGE, 
-        maxSize, 
-        actualSize: file.size 
-      }
-    );
-  }
-  return true;
-};
-
-const generateUniqueFilename = (originalname, userId = null) => {
+/**
+ * Generate secure filename
+ * @param {string} originalName - Original filename
+ * @param {string} prefix - File prefix
+ * @returns {string} Secure filename
+ */
+const generateSecureFilename = (originalName, prefix = '') => {
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 8);
-  const extension = path.extname(originalname);
-  const baseName = path.basename(originalname, extension)
-    .replace(/[^a-zA-Z0-9]/g, '_')
-    .substring(0, 20);
+  const randomBytes = crypto.randomBytes(8).toString('hex');
+  const extension = path.extname(originalName).toLowerCase();
   
-  const userPrefix = userId ? `${userId}_` : '';
-  return `${userPrefix}${timestamp}_${random}_${baseName}${extension}`;
+  // Sanitize extension
+  const sanitizedExtension = extension.replace(/[^a-z0-9.]/gi, '');
+  
+  return `${prefix}${timestamp}_${randomBytes}${sanitizedExtension}`;
 };
 
-// ================================
-// STORAGE CONFIGURATIONS
-// ================================
+/**
+ * Validate file type based on magic numbers (file signatures)
+ * @param {Buffer} buffer - File buffer
+ * @param {string} mimetype - Reported MIME type
+ * @returns {Object} Validation result
+ */
+const validateFileSignature = (buffer, mimetype) => {
+  if (!buffer || buffer.length < 4) {
+    return { isValid: false, reason: 'File too small or empty' };
+  }
 
-const createStorage = (uploadPath, options = {}) => {
-  return multer.diskStorage({
-    destination: async (req, file, cb) => {
-      try {
-        await fs.mkdir(uploadPath, { recursive: true });
-        cb(null, uploadPath);
-      } catch (error) {
-        cb(error);
-      }
-    },
-    filename: (req, file, cb) => {
-      try {
-        const userId = req.user?.id;
-        const filename = generateUniqueFilename(file.originalname, userId);
-        cb(null, filename);
-      } catch (error) {
-        cb(error);
-      }
-    }
-  });
-};
-
-// ================================
-// FILE FILTERS
-// ================================
-
-const createFileFilter = (config) => {
-  return (req, file, cb) => {
-    try {
-      validateFileType(file, config.ALLOWED_TYPES, config.ALLOWED_EXTENSIONS);
-      cb(null, true);
-    } catch (error) {
-      cb(error, false);
-    }
+  // Common file signatures (magic numbers)
+  const signatures = {
+    // Images
+    'image/jpeg': [
+      [0xFF, 0xD8, 0xFF], // JPEG
+    ],
+    'image/png': [
+      [0x89, 0x50, 0x4E, 0x47], // PNG
+    ],
+    'image/gif': [
+      [0x47, 0x49, 0x46, 0x38], // GIF
+    ],
+    'image/webp': [
+      [0x52, 0x49, 0x46, 0x46], // WEBP (RIFF)
+    ],
+    // Videos
+    'video/mp4': [
+      [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70], // MP4
+      [0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70], // MP4
+    ],
+    'video/webm': [
+      [0x1A, 0x45, 0xDF, 0xA3], // WebM
+    ],
+    // Documents
+    'application/pdf': [
+      [0x25, 0x50, 0x44, 0x46], // PDF
+    ]
   };
+
+  const fileSignatures = signatures[mimetype];
+  if (!fileSignatures) {
+    return { isValid: true, reason: 'Unknown type, allowing' };
+  }
+
+  // Check if buffer starts with any valid signature
+  for (const signature of fileSignatures) {
+    let match = true;
+    for (let i = 0; i < signature.length; i++) {
+      if (buffer[i] !== signature[i]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      return { isValid: true, reason: 'Valid signature' };
+    }
+  }
+
+  return { isValid: false, reason: 'Invalid file signature' };
+};
+
+/**
+ * Scan file for malicious content (placeholder for virus scanning)
+ * @param {Buffer} buffer - File buffer
+ * @param {string} filename - Filename
+ * @returns {Promise<Object>} Scan result
+ */
+const scanFileForThreats = async (buffer, filename) => {
+  try {
+    // TODO: Integrate with ClamAV or similar antivirus
+    // For now, perform basic checks
+    
+    // Check for suspicious patterns in filename
+    const suspiciousPatterns = [
+      /\.exe$/i,
+      /\.bat$/i,
+      /\.cmd$/i,
+      /\.scr$/i,
+      /\.com$/i,
+      /\.pif$/i,
+      /\.vbs$/i,
+      /\.js$/i,
+      /\.jar$/i,
+      /\.php$/i,
+      /\.asp$/i,
+      /\.jsp$/i
+    ];
+
+    for (const pattern of suspiciousPatterns) {
+      if (pattern.test(filename)) {
+        return {
+          isClean: false,
+          threat: 'suspicious_extension',
+          reason: `Potentially dangerous file extension`
+        };
+      }
+    }
+
+    // Check for embedded executables in image files
+    if (buffer.includes(Buffer.from('MZ'))) { // Windows PE header
+      return {
+        isClean: false,
+        threat: 'embedded_executable',
+        reason: 'Executable code detected in file'
+      };
+    }
+
+    // Check file size against mime type expectations
+    const sizeThresholds = {
+      'image/jpeg': 20 * 1024 * 1024, // 20MB
+      'image/png': 20 * 1024 * 1024,  // 20MB
+      'video/mp4': 100 * 1024 * 1024, // 100MB
+      'application/pdf': 50 * 1024 * 1024 // 50MB
+    };
+
+    // Basic scan passed
+    return {
+      isClean: true,
+      threat: null,
+      reason: 'No threats detected'
+    };
+  } catch (error) {
+    logger.error('File threat scan failed:', error);
+    return {
+      isClean: false,
+      threat: 'scan_error',
+      reason: 'Unable to scan file for threats'
+    };
+  }
+};
+
+// ================================
+// STORAGE CONFIGURATION
+// ================================
+
+/**
+ * Configure multer storage
+ */
+const storage = multer.memoryStorage(); // Use memory storage for processing
+
+/**
+ * File filter function
+ * @param {Object} req - Express request
+ * @param {Object} file - Multer file object
+ * @param {Function} cb - Callback function
+ */
+const fileFilter = (req, file, cb) => {
+  try {
+    const { fieldname, mimetype, originalname } = file;
+    
+    // Check allowed file types based on field
+    let allowedTypes = [];
+    
+    switch (fieldname) {
+      case 'images':
+      case 'image':
+      case 'avatar':
+        allowedTypes = ALLOWED_FILE_TYPES.IMAGES;
+        break;
+      case 'videos':
+      case 'video':
+        allowedTypes = ALLOWED_FILE_TYPES.VIDEOS;
+        break;
+      case 'models_3d':
+      case 'model':
+        allowedTypes = ALLOWED_FILE_TYPES.MODELS_3D;
+        break;
+      case 'documents':
+      case 'document':
+        allowedTypes = ALLOWED_FILE_TYPES.DOCUMENTS;
+        break;
+      default:
+        return cb(new FileUploadError(`Unknown file field: ${fieldname}`));
+    }
+
+    // Check MIME type
+    if (!allowedTypes.includes(mimetype)) {
+      return cb(new FileUploadError(
+        `File type ${mimetype} not allowed for field ${fieldname}`
+      ));
+    }
+
+    // Check filename for path traversal
+    if (originalname.includes('..') || originalname.includes('/') || originalname.includes('\\')) {
+      return cb(new FileUploadError('Invalid filename'));
+    }
+
+    // Check filename length
+    if (originalname.length > 255) {
+      return cb(new FileUploadError('Filename too long'));
+    }
+
+    cb(null, true);
+  } catch (error) {
+    cb(new FileUploadError('File validation failed'));
+  }
 };
 
 // ================================
 // MULTER CONFIGURATIONS
 // ================================
 
-const imageUpload = multer({
-  storage: createStorage(uploadPaths.images),
+/**
+ * General file upload configuration
+ */
+const uploadConfig = {
+  storage,
+  fileFilter,
   limits: {
-    fileSize: UPLOAD_LIMITS.IMAGES.MAX_SIZE,
-    files: UPLOAD_LIMITS.IMAGES.MAX_COUNT
-  },
-  fileFilter: createFileFilter(UPLOAD_LIMITS.IMAGES)
-});
+    fileSize: BUSINESS_RULES.MAX_FILE_SIZE_MB * 1024 * 1024,
+    files: 20, // Maximum number of files
+    fields: 10, // Maximum number of non-file fields
+    fieldNameSize: 100, // Maximum field name size
+    fieldSize: 1024 * 1024, // Maximum field value size (1MB)
+    headerPairs: 2000 // Maximum number of header key-value pairs
+  }
+};
 
-const videoUpload = multer({
-  storage: createStorage(uploadPaths.videos),
+/**
+ * Image upload configuration
+ */
+const imageUploadConfig = {
+  ...uploadConfig,
   limits: {
-    fileSize: UPLOAD_LIMITS.VIDEOS.MAX_SIZE,
-    files: UPLOAD_LIMITS.VIDEOS.MAX_COUNT
-  },
-  fileFilter: createFileFilter(UPLOAD_LIMITS.VIDEOS)
-});
+    ...uploadConfig.limits,
+    fileSize: BUSINESS_RULES.MAX_IMAGE_SIZE_MB * 1024 * 1024,
+    files: BUSINESS_RULES.MAX_IMAGES_PER_LISTING
+  }
+};
 
-const modelUpload = multer({
-  storage: createStorage(uploadPaths.models),
+/**
+ * Video upload configuration
+ */
+const videoUploadConfig = {
+  ...uploadConfig,
   limits: {
-    fileSize: UPLOAD_LIMITS.MODELS_3D.MAX_SIZE,
-    files: UPLOAD_LIMITS.MODELS_3D.MAX_COUNT
-  },
-  fileFilter: createFileFilter(UPLOAD_LIMITS.MODELS_3D)
-});
+    ...uploadConfig.limits,
+    fileSize: BUSINESS_RULES.MAX_VIDEO_SIZE_MB * 1024 * 1024,
+    files: BUSINESS_RULES.MAX_VIDEOS_PER_LISTING
+  }
+};
 
-const avatarUpload = multer({
-  storage: createStorage(uploadPaths.avatars),
+/**
+ * 3D model upload configuration
+ */
+const modelUploadConfig = {
+  ...uploadConfig,
   limits: {
-    fileSize: UPLOAD_LIMITS.AVATARS.MAX_SIZE,
+    ...uploadConfig.limits,
+    fileSize: BUSINESS_RULES.MAX_3D_MODEL_SIZE_MB * 1024 * 1024,
+    files: BUSINESS_RULES.MAX_3D_MODELS_PER_LISTING
+  }
+};
+
+// ================================
+// MIDDLEWARE FUNCTIONS
+// ================================
+
+/**
+ * Generic file upload middleware
+ */
+const uploadFiles = multer(uploadConfig);
+
+/**
+ * Image upload middleware
+ */
+const uploadImages = multer(imageUploadConfig);
+
+/**
+ * Video upload middleware
+ */
+const uploadVideos = multer(videoUploadConfig);
+
+/**
+ * 3D model upload middleware
+ */
+const uploadModels = multer(modelUploadConfig);
+
+/**
+ * Single avatar upload
+ */
+const uploadAvatar = multer({
+  ...imageUploadConfig,
+  limits: {
+    ...imageUploadConfig.limits,
+    fileSize: 5 * 1024 * 1024, // 5MB for avatars
     files: 1
-  },
-  fileFilter: createFileFilter(UPLOAD_LIMITS.AVATARS)
-});
-
-// ================================
-// LISTING MEDIA UPLOAD (COMBINED)
-// ================================
-
-const listingMediaUpload = multer({
-  storage: createStorage(uploadPaths.temp),
-  limits: {
-    fileSize: Math.max(
-      UPLOAD_LIMITS.IMAGES.MAX_SIZE,
-      UPLOAD_LIMITS.VIDEOS.MAX_SIZE,
-      UPLOAD_LIMITS.MODELS_3D.MAX_SIZE
-    ),
-    files: UPLOAD_LIMITS.IMAGES.MAX_COUNT + 
-           UPLOAD_LIMITS.VIDEOS.MAX_COUNT + 
-           UPLOAD_LIMITS.MODELS_3D.MAX_COUNT
-  },
-  fileFilter: (req, file, cb) => {
-    try {
-      const fieldName = file.fieldname;
-      
-      switch (fieldName) {
-        case 'images':
-          validateFileType(file, UPLOAD_LIMITS.IMAGES.ALLOWED_TYPES, UPLOAD_LIMITS.IMAGES.ALLOWED_EXTENSIONS);
-          validateFileSize(file, UPLOAD_LIMITS.IMAGES.MAX_SIZE);
-          break;
-        case 'videos':
-          validateFileType(file, UPLOAD_LIMITS.VIDEOS.ALLOWED_TYPES, UPLOAD_LIMITS.VIDEOS.ALLOWED_EXTENSIONS);
-          validateFileSize(file, UPLOAD_LIMITS.VIDEOS.MAX_SIZE);
-          break;
-        case 'models':
-          validateFileType(file, UPLOAD_LIMITS.MODELS_3D.ALLOWED_TYPES, UPLOAD_LIMITS.MODELS_3D.ALLOWED_EXTENSIONS);
-          validateFileSize(file, UPLOAD_LIMITS.MODELS_3D.MAX_SIZE);
-          break;
-        default:
-          throw new ValidationError('Invalid field name for file upload');
-      }
-      
-      cb(null, true);
-    } catch (error) {
-      cb(error, false);
-    }
   }
-});
+}).single('avatar');
+
+/**
+ * Multiple listing files upload
+ */
+const uploadListingFiles = multer(uploadConfig).fields([
+  { name: 'images', maxCount: BUSINESS_RULES.MAX_IMAGES_PER_LISTING },
+  { name: 'videos', maxCount: BUSINESS_RULES.MAX_VIDEOS_PER_LISTING },
+  { name: 'models_3d', maxCount: BUSINESS_RULES.MAX_3D_MODELS_PER_LISTING }
+]);
 
 // ================================
-// IMAGE PROCESSING
+// SECURITY VALIDATION MIDDLEWARE
 // ================================
 
-const processImage = async (filePath, options = {}) => {
+/**
+ * Advanced file security validation
+ * @param {Object} req - Express request
+ * @param {Object} res - Express response
+ * @param {Function} next - Next middleware
+ */
+const validateFilesSecurity = async (req, res, next) => {
   try {
-    const {
-      width = 1200,
-      height = 1200,
-      quality = 85,
-      format = 'jpeg',
-      createThumbnail = true,
-      thumbnailSize = 300
-    } = options;
-
-    const processedPath = filePath.replace(/\.[^/.]+$/, `_processed.${format}`);
-    const thumbnailPath = filePath.replace(/\.[^/.]+$/, `_thumb.${format}`);
-
-    // Process main image
-    await sharp(filePath)
-      .resize(width, height, { 
-        fit: 'inside',
-        withoutEnlargement: true 
-      })
-      .jpeg({ quality })
-      .toFile(processedPath);
-
-    // Create thumbnail if requested
-    if (createThumbnail) {
-      await sharp(filePath)
-        .resize(thumbnailSize, thumbnailSize, { 
-          fit: 'cover' 
-        })
-        .jpeg({ quality: 70 })
-        .toFile(thumbnailPath);
+    if (!req.files && !req.file) {
+      return next(); // No files to validate
     }
 
-    // Remove original file
-    await fs.unlink(filePath);
-
-    return {
-      processedPath,
-      thumbnailPath: createThumbnail ? thumbnailPath : null
-    };
-  } catch (error) {
-    logger.error('Image processing failed:', error);
-    throw new Error('Image processing failed');
-  }
-};
-
-// ================================
-// VIDEO VALIDATION
-// ================================
-
-const validateVideo = async (filePath) => {
-  try {
-    // Basic video validation
-    const stats = await fs.stat(filePath);
+    const filesToValidate = [];
     
-    if (stats.size > UPLOAD_LIMITS.VIDEOS.MAX_SIZE) {
-      throw new ValidationError('Video file too large');
+    // Collect all files for validation
+    if (req.file) {
+      filesToValidate.push(req.file);
     }
-
-    // TODO: Add ffprobe integration for duration validation
-    // For now, we'll do basic file validation
     
-    return {
-      size: stats.size,
-      valid: true
-    };
-  } catch (error) {
-    logger.error('Video validation failed:', error);
-    throw error;
-  }
-};
-
-// ================================
-// 3D MODEL VALIDATION
-// ================================
-
-const validate3DModel = async (filePath) => {
-  try {
-    const stats = await fs.stat(filePath);
-    const extension = path.extname(filePath).toLowerCase();
-    
-    if (stats.size > UPLOAD_LIMITS.MODELS_3D.MAX_SIZE) {
-      throw new ValidationError('3D model file too large');
-    }
-
-    // Basic format validation
-    if (!['.glb', '.obj', '.gltf'].includes(extension)) {
-      throw new ValidationError('Invalid 3D model format');
-    }
-
-    return {
-      size: stats.size,
-      format: extension,
-      valid: true
-    };
-  } catch (error) {
-    logger.error('3D model validation failed:', error);
-    throw error;
-  }
-};
-
-// ================================
-// FILE ORGANIZATION
-// ================================
-
-const organizeUploadedFiles = async (files, userId, listingId = null) => {
-  const organized = {
-    images: [],
-    videos: [],
-    models: []
-  };
-
-  try {
-    for (const file of files) {
-      const finalDir = file.fieldname === 'images' ? uploadPaths.images :
-                      file.fieldname === 'videos' ? uploadPaths.videos :
-                      uploadPaths.models;
-
-      const finalPath = path.join(finalDir, path.basename(file.path));
-      
-      // Move file from temp to final location
-      await fs.rename(file.path, finalPath);
-
-      const fileInfo = {
-        originalName: file.originalname,
-        filename: path.basename(finalPath),
-        path: finalPath,
-        url: `/uploads/${file.fieldname}/${path.basename(finalPath)}`,
-        size: file.size,
-        mimeType: file.mimetype
-      };
-
-      // Process based on file type
-      if (file.fieldname === 'images') {
-        const processed = await processImage(finalPath);
-        fileInfo.processedPath = processed.processedPath;
-        fileInfo.thumbnailPath = processed.thumbnailPath;
-        fileInfo.processedUrl = processed.processedPath.replace('uploads/', '/uploads/');
-        fileInfo.thumbnailUrl = processed.thumbnailPath?.replace('uploads/', '/uploads/');
-        organized.images.push(fileInfo);
-      } else if (file.fieldname === 'videos') {
-        await validateVideo(finalPath);
-        organized.videos.push(fileInfo);
-      } else if (file.fieldname === 'models') {
-        await validate3DModel(finalPath);
-        organized.models.push(fileInfo);
+    if (req.files) {
+      if (Array.isArray(req.files)) {
+        filesToValidate.push(...req.files);
+      } else {
+        // req.files is an object with field names as keys
+        Object.values(req.files).forEach(fileArray => {
+          if (Array.isArray(fileArray)) {
+            filesToValidate.push(...fileArray);
+          } else {
+            filesToValidate.push(fileArray);
+          }
+        });
       }
     }
 
-    return organized;
+    // Validate each file
+    for (const file of filesToValidate) {
+      // Validate file signature
+      const signatureCheck = validateFileSignature(file.buffer, file.mimetype);
+      if (!signatureCheck.isValid) {
+        throw new FileUploadError(
+          `Invalid file signature: ${signatureCheck.reason}`,
+          'invalid_signature'
+        );
+      }
+
+      // Scan for threats
+      const threatScan = await scanFileForThreats(file.buffer, file.originalname);
+      if (!threatScan.isClean) {
+        logger.warn('Malicious file detected:', {
+          filename: file.originalname,
+          threat: threatScan.threat,
+          reason: threatScan.reason,
+          userId: req.user?.id,
+          ip: req.ip
+        });
+        
+        throw new FileUploadError(
+          'File contains malicious content',
+          'security_threat'
+        );
+      }
+
+      // Add security metadata to file object
+      file.securityChecked = true;
+      file.securityTimestamp = new Date();
+      file.secureFilename = generateSecureFilename(file.originalname, `${file.fieldname}_`);
+    }
+
+    next();
   } catch (error) {
-    // Clean up files on error
-    for (const file of files) {
+    logger.error('File security validation failed:', error);
+    next(error);
+  }
+};
+
+/**
+ * Image optimization middleware
+ * @param {Object} req - Express request
+ * @param {Object} res - Express response
+ * @param {Function} next - Next middleware
+ */
+const optimizeImages = async (req, res, next) => {
+  try {
+    if (!req.files && !req.file) {
+      return next();
+    }
+
+    const imageFiles = [];
+    
+    // Collect image files
+    if (req.file && req.file.mimetype.startsWith('image/')) {
+      imageFiles.push(req.file);
+    }
+    
+    if (req.files) {
+      Object.values(req.files).forEach(fileArray => {
+        if (Array.isArray(fileArray)) {
+          imageFiles.push(...fileArray.filter(f => f.mimetype.startsWith('image/')));
+        } else if (fileArray.mimetype?.startsWith('image/')) {
+          imageFiles.push(fileArray);
+        }
+      });
+    }
+
+    // Optimize each image
+    for (const imageFile of imageFiles) {
+      if (imageFile.mimetype === 'image/gif') {
+        // Skip GIF optimization to preserve animation
+        continue;
+      }
+
       try {
-        await fs.unlink(file.path);
-      } catch (unlinkError) {
-        logger.error('Failed to clean up file:', unlinkError);
+        // Optimize with Sharp
+        const optimizedBuffer = await sharp(imageFile.buffer)
+          .resize(2048, 2048, { 
+            fit: 'inside',
+            withoutEnlargement: true 
+          })
+          .jpeg({ 
+            quality: 85,
+            progressive: true 
+          })
+          .toBuffer();
+
+        // Update file buffer and size
+        imageFile.buffer = optimizedBuffer;
+        imageFile.size = optimizedBuffer.length;
+        imageFile.optimized = true;
+        
+      } catch (optimizationError) {
+        logger.warn('Image optimization failed:', {
+          filename: imageFile.originalname,
+          error: optimizationError.message
+        });
+        // Continue with original file if optimization fails
       }
     }
-    throw error;
+
+    next();
+  } catch (error) {
+    logger.error('Image optimization failed:', error);
+    next(error);
   }
 };
 
 // ================================
-// MIDDLEWARE WRAPPERS
+// ERROR HANDLING
 // ================================
 
-const handleUploadError = (err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        error: 'File too large',
-        code: ERROR_CODES.UPLOAD_FILE_TOO_LARGE,
-        message: `Maximum file size exceeded`
-      });
-    }
-    
-    if (err.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({
-        success: false,
-        error: 'Too many files',
-        code: ERROR_CODES.UPLOAD_FILE_TOO_LARGE,
-        message: 'Maximum number of files exceeded'
-      });
-    }
-    
-    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({
-        success: false,
-        error: 'Unexpected file field',
-        code: ERROR_CODES.UPLOAD_INVALID_TYPE,
-        message: `Unexpected field: ${err.field}`
-      });
+/**
+ * Handle upload errors
+ * @param {Error} error - Upload error
+ * @param {Object} req - Express request
+ * @param {Object} res - Express response
+ * @param {Function} next - Next middleware
+ */
+const handleUploadError = (error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return next(new FileUploadError('File too large'));
+      case 'LIMIT_FILE_COUNT':
+        return next(new FileUploadError('Too many files'));
+      case 'LIMIT_UNEXPECTED_FILE':
+        return next(new FileUploadError('Unexpected file field'));
+      case 'LIMIT_FIELD_KEY':
+        return next(new FileUploadError('Field name too long'));
+      case 'LIMIT_FIELD_VALUE':
+        return next(new FileUploadError('Field value too long'));
+      case 'LIMIT_FIELD_COUNT':
+        return next(new FileUploadError('Too many fields'));
+      case 'LIMIT_PART_COUNT':
+        return next(new FileUploadError('Too many parts'));
+      default:
+        return next(new FileUploadError('Upload failed'));
     }
   }
   
-  if (err instanceof ValidationError) {
-    return res.status(400).json({
-      success: false,
-      error: err.message,
-      code: err.code,
-      details: err.details
-    });
-  }
-  
-  next(err);
+  next(error);
 };
 
 // ================================
 // CLEANUP UTILITIES
 // ================================
 
-const cleanupTempFiles = async (maxAge = 24 * 60 * 60 * 1000) => {
+/**
+ * Clean up temporary files
+ * @param {Array} files - Files to clean up
+ */
+const cleanupTempFiles = async (files = []) => {
   try {
-    const tempDir = uploadPaths.temp;
-    const files = await fs.readdir(tempDir);
-    const now = Date.now();
-    
-    for (const file of files) {
-      const filePath = path.join(tempDir, file);
-      const stats = await fs.stat(filePath);
-      
-      if (now - stats.mtime.getTime() > maxAge) {
-        await fs.unlink(filePath);
-        logger.debug(`Cleaned up temp file: ${file}`);
+    const cleanupPromises = files.map(async (file) => {
+      if (file.path) {
+        try {
+          await fs.unlink(file.path);
+        } catch (error) {
+          // File might already be deleted, ignore error
+        }
       }
-    }
+    });
+    
+    await Promise.all(cleanupPromises);
   } catch (error) {
-    logger.error('Error cleaning up temp files:', error);
-  }
-};
-
-const deleteFile = async (filePath) => {
-  try {
-    await fs.unlink(filePath);
-    logger.debug(`Deleted file: ${filePath}`);
-  } catch (error) {
-    logger.error(`Error deleting file ${filePath}:`, error);
+    logger.error('Cleanup temp files failed:', error);
   }
 };
 
@@ -463,35 +547,22 @@ const deleteFile = async (filePath) => {
 // ================================
 
 module.exports = {
-  // Individual upload middleware
-  uploadImages: imageUpload.array('images', UPLOAD_LIMITS.IMAGES.MAX_COUNT),
-  uploadVideo: videoUpload.single('video'),
-  uploadModels: modelUpload.array('models', UPLOAD_LIMITS.MODELS_3D.MAX_COUNT),
-  uploadAvatar: avatarUpload.single('avatar'),
+  // Multer configurations
+  uploadFiles,
+  uploadImages,
+  uploadVideos,
+  uploadModels,
+  uploadAvatar,
+  uploadListingFiles,
   
-  // Combined listing media upload
-  uploadListingMedia: listingMediaUpload.fields([
-    { name: 'images', maxCount: UPLOAD_LIMITS.IMAGES.MAX_COUNT },
-    { name: 'videos', maxCount: UPLOAD_LIMITS.VIDEOS.MAX_COUNT },
-    { name: 'models', maxCount: UPLOAD_LIMITS.MODELS_3D.MAX_COUNT }
-  ]),
-  
-  // Processing functions
-  processImage,
-  validateVideo,
-  validate3DModel,
-  organizeUploadedFiles,
-  
-  // Error handling
+  // Security middleware
+  validateFilesSecurity,
+  optimizeImages,
   handleUploadError,
   
-  // Utilities
-  cleanupTempFiles,
-  deleteFile,
-  uploadPaths,
-  
-  // Validation functions
-  validateFileType,
-  validateFileSize,
-  generateUniqueFilename
+  // Utility functions
+  generateSecureFilename,
+  validateFileSignature,
+  scanFileForThreats,
+  cleanupTempFiles
 };

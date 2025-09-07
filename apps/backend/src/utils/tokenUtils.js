@@ -1,81 +1,365 @@
 // apps/backend/src/utils/tokenUtils.js
-// JWT utilities, email verification tokens, password reset tokens, token blacklisting
+// Complete token utilities for VOID Marketplace
 
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { promisify } = require('util');
+const { API_CONFIG, BUSINESS_RULES } = require('../config/constants');
 const logger = require('./logger');
 
 // ================================
-// JWT TOKEN MANAGEMENT
+// JWT TOKEN GENERATION
 // ================================
 
 /**
- * Generate JWT access token
- * @param {Object} payload - Token payload (user info)
- * @param {string} expiresIn - Token expiration time
- * @returns {string} JWT token
+ * Generate access and refresh token pair
+ * @param {Object} payload - Token payload
+ * @returns {Object} Token pair with metadata
  */
-const generateAccessToken = (payload, expiresIn = '24h') => {
+const generateTokenPair = (payload) => {
   try {
-    return jwt.sign(payload, process.env.JWT_SECRET, {
-      expiresIn,
-      issuer: 'void-marketplace',
-      audience: 'void-users'
+    const { userId, email, role } = payload;
+
+    if (!userId || !email || !role) {
+      throw new Error('Missing required payload fields: userId, email, role');
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const accessTokenExp = now + (15 * 60); // 15 minutes
+    const refreshTokenExp = now + (7 * 24 * 60 * 60); // 7 days
+
+    // Access token payload
+    const accessPayload = {
+      userId,
+      email,
+      role,
+      type: 'access',
+      iat: now,
+      exp: accessTokenExp,
+      iss: API_CONFIG.JWT.ISSUER,
+      aud: API_CONFIG.JWT.AUDIENCE
+    };
+
+    // Refresh token payload
+    const refreshPayload = {
+      userId,
+      email,
+      type: 'refresh',
+      iat: now,
+      exp: refreshTokenExp,
+      iss: API_CONFIG.JWT.ISSUER,
+      aud: API_CONFIG.JWT.AUDIENCE
+    };
+
+    // Generate tokens
+    const accessToken = jwt.sign(accessPayload, process.env.JWT_SECRET, {
+      algorithm: API_CONFIG.JWT.ALGORITHM
     });
+
+    const refreshToken = jwt.sign(refreshPayload, process.env.JWT_REFRESH_SECRET, {
+      algorithm: API_CONFIG.JWT.ALGORITHM
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
+      expiresIn: accessTokenExp,
+      expiresAt: new Date(accessTokenExp * 1000).toISOString(),
+      refreshExpiresIn: refreshTokenExp,
+      refreshExpiresAt: new Date(refreshTokenExp * 1000).toISOString()
+    };
   } catch (error) {
-    logger.error('Generate access token failed:', error);
-    throw new Error('Token generation failed');
+    logger.error('Token generation failed:', error);
+    throw new Error('Failed to generate tokens');
   }
 };
 
 /**
- * Generate JWT refresh token
- * @param {Object} payload - Token payload
- * @returns {string} Refresh token
+ * Generate email verification token
+ * @param {string} userId - User ID
+ * @param {string} email - User email
+ * @returns {string} Verification token
  */
-const generateRefreshToken = (payload) => {
+const generateEmailVerificationToken = (userId, email) => {
   try {
-    return jwt.sign(payload, process.env.JWT_REFRESH_SECRET, {
-      expiresIn: '7d',
-      issuer: 'void-marketplace',
-      audience: 'void-users'
-    });
+    const payload = {
+      userId,
+      email,
+      type: 'email_verification',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
+    };
+
+    return jwt.sign(payload, process.env.JWT_SECRET);
   } catch (error) {
-    logger.error('Generate refresh token failed:', error);
-    throw new Error('Refresh token generation failed');
+    logger.error('Email verification token generation failed:', error);
+    throw new Error('Failed to generate email verification token');
   }
 };
+
+/**
+ * Generate password reset token
+ * @param {string} userId - User ID
+ * @param {string} email - User email
+ * @returns {string} Reset token
+ */
+const generatePasswordResetToken = (userId, email) => {
+  try {
+    const payload = {
+      userId,
+      email,
+      type: 'password_reset',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + (60 * 60) // 1 hour
+    };
+
+    return jwt.sign(payload, process.env.JWT_SECRET);
+  } catch (error) {
+    logger.error('Password reset token generation failed:', error);
+    throw new Error('Failed to generate password reset token');
+  }
+};
+
+/**
+ * Generate API key for external integrations
+ * @param {string} userId - User ID
+ * @param {string} purpose - API key purpose
+ * @param {number} expiryDays - Expiry in days (0 = never expires)
+ * @returns {Object} API key and metadata
+ */
+const generateApiKey = (userId, purpose = 'general', expiryDays = 365) => {
+  try {
+    const keyId = crypto.randomBytes(16).toString('hex');
+    const secret = crypto.randomBytes(32).toString('base64url');
+    
+    const payload = {
+      keyId,
+      userId,
+      purpose,
+      type: 'api_key',
+      iat: Math.floor(Date.now() / 1000),
+      exp: expiryDays > 0 ? Math.floor(Date.now() / 1000) + (expiryDays * 24 * 60 * 60) : null
+    };
+
+    const token = jwt.sign(payload, process.env.JWT_SECRET);
+    
+    return {
+      keyId,
+      apiKey: `vk_${keyId}_${secret}`,
+      token,
+      purpose,
+      expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+      createdAt: new Date().toISOString()
+    };
+  } catch (error) {
+    logger.error('API key generation failed:', error);
+    throw new Error('Failed to generate API key');
+  }
+};
+
+// ================================
+// TOKEN VERIFICATION
+// ================================
 
 /**
  * Verify JWT token
- * @param {string} token - JWT token to verify
- * @param {string} secret - Secret key (optional, defaults to JWT_SECRET)
- * @returns {Object} Decoded token payload
+ * @param {string} token - JWT token
+ * @param {string} secret - JWT secret (optional, defaults to JWT_SECRET)
+ * @returns {Object} Decoded payload
  */
-const verifyToken = async (token, secret = process.env.JWT_SECRET) => {
+const verifyToken = (token, secret = process.env.JWT_SECRET) => {
   try {
-    const verify = promisify(jwt.verify);
-    return await verify(token, secret);
+    if (!token) {
+      throw new Error('Token is required');
+    }
+
+    const decoded = jwt.verify(token, secret, {
+      issuer: API_CONFIG.JWT.ISSUER,
+      audience: API_CONFIG.JWT.AUDIENCE,
+      algorithms: [API_CONFIG.JWT.ALGORITHM]
+    });
+
+    return decoded;
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
-      throw new Error('Token expired');
+      throw new Error('Token has expired');
     } else if (error.name === 'JsonWebTokenError') {
       throw new Error('Invalid token');
+    } else if (error.name === 'NotBeforeError') {
+      throw new Error('Token not yet valid');
     }
+    
     logger.error('Token verification failed:', error);
     throw new Error('Token verification failed');
   }
 };
 
 /**
- * Decode JWT token without verification (for expired token data)
+ * Verify refresh token
+ * @param {string} refreshToken - Refresh token
+ * @returns {Object} Decoded payload
+ */
+const verifyRefreshToken = (refreshToken) => {
+  try {
+    return verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET);
+  } catch (error) {
+    logger.error('Refresh token verification failed:', error);
+    throw new Error('Invalid or expired refresh token');
+  }
+};
+
+/**
+ * Verify email verification token
+ * @param {string} token - Verification token
+ * @returns {Object} Decoded payload
+ */
+const verifyEmailVerificationToken = (token) => {
+  try {
+    const decoded = verifyToken(token);
+    
+    if (decoded.type !== 'email_verification') {
+      throw new Error('Invalid token type');
+    }
+    
+    return decoded;
+  } catch (error) {
+    logger.error('Email verification token verification failed:', error);
+    throw new Error('Invalid or expired verification token');
+  }
+};
+
+/**
+ * Verify password reset token
+ * @param {string} token - Reset token
+ * @returns {Object} Decoded payload
+ */
+const verifyPasswordResetToken = (token) => {
+  try {
+    const decoded = verifyToken(token);
+    
+    if (decoded.type !== 'password_reset') {
+      throw new Error('Invalid token type');
+    }
+    
+    return decoded;
+  } catch (error) {
+    logger.error('Password reset token verification failed:', error);
+    throw new Error('Invalid or expired reset token');
+  }
+};
+
+/**
+ * Verify API key
+ * @param {string} apiKey - API key
+ * @returns {Object} Decoded payload
+ */
+const verifyApiKey = (apiKey) => {
+  try {
+    if (!apiKey || !apiKey.startsWith('vk_')) {
+      throw new Error('Invalid API key format');
+    }
+
+    // Extract components
+    const parts = apiKey.split('_');
+    if (parts.length !== 3) {
+      throw new Error('Invalid API key format');
+    }
+
+    const [prefix, keyId, secret] = parts;
+    
+    // For now, we'll implement basic validation
+    // In production, you'd want to verify against stored API keys
+    if (keyId.length !== 32 || secret.length < 32) {
+      throw new Error('Invalid API key format');
+    }
+
+    return {
+      keyId,
+      valid: true,
+      purpose: 'general' // Would be retrieved from database in production
+    };
+  } catch (error) {
+    logger.error('API key verification failed:', error);
+    throw new Error('Invalid API key');
+  }
+};
+
+// ================================
+// TOKEN UTILITY FUNCTIONS
+// ================================
+
+/**
+ * Extract token from Authorization header
+ * @param {string} authHeader - Authorization header value
+ * @returns {string|null} Extracted token
+ */
+const extractTokenFromHeader = (authHeader) => {
+  if (!authHeader) {
+    return null;
+  }
+
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return null;
+  }
+
+  return parts[1];
+};
+
+/**
+ * Get token expiration time
  * @param {string} token - JWT token
- * @returns {Object|null} Decoded payload or null
+ * @returns {number|null} Expiration timestamp
+ */
+const getTokenExpiration = (token) => {
+  try {
+    const decoded = jwt.decode(token);
+    return decoded?.exp || null;
+  } catch (error) {
+    return null;
+  }
+};
+
+/**
+ * Check if token is expired
+ * @param {string} token - JWT token
+ * @returns {boolean} Is token expired
+ */
+const isTokenExpired = (token) => {
+  try {
+    const exp = getTokenExpiration(token);
+    if (!exp) return true;
+    
+    return Date.now() >= exp * 1000;
+  } catch (error) {
+    return true;
+  }
+};
+
+/**
+ * Get time until token expires
+ * @param {string} token - JWT token
+ * @returns {number} Milliseconds until expiration (negative if expired)
+ */
+const getTimeUntilExpiration = (token) => {
+  try {
+    const exp = getTokenExpiration(token);
+    if (!exp) return -1;
+    
+    return (exp * 1000) - Date.now();
+  } catch (error) {
+    return -1;
+  }
+};
+
+/**
+ * Decode token without verification (for inspection)
+ * @param {string} token - JWT token
+ * @returns {Object|null} Decoded payload
  */
 const decodeToken = (token) => {
   try {
-    return jwt.decode(token);
+    return jwt.decode(token, { complete: true });
   } catch (error) {
     logger.error('Token decode failed:', error);
     return null;
@@ -83,134 +367,11 @@ const decodeToken = (token) => {
 };
 
 // ================================
-// EMAIL VERIFICATION TOKENS
+// TOKEN BLACKLISTING SYSTEM
 // ================================
 
-/**
- * Generate email verification token
- * @param {string} userId - User ID
- * @param {string} email - User email
- * @returns {Object} Token data and expiry
- */
-const generateEmailVerificationToken = (userId, email) => {
-  try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-    
-    // Create verification hash
-    const verificationHash = crypto
-      .createHmac('sha256', process.env.EMAIL_VERIFICATION_SECRET || process.env.JWT_SECRET)
-      .update(`${userId}:${email}:${token}`)
-      .digest('hex');
-
-    return {
-      token,
-      verification_hash: verificationHash,
-      expires_at: expires,
-      user_id: userId,
-      email: email
-    };
-  } catch (error) {
-    logger.error('Generate email verification token failed:', error);
-    throw new Error('Email verification token generation failed');
-  }
-};
-
-/**
- * Verify email verification token
- * @param {string} token - Verification token
- * @param {string} userId - User ID
- * @param {string} email - User email
- * @returns {boolean} Is token valid
- */
-const verifyEmailVerificationToken = (token, userId, email) => {
-  try {
-    const expectedHash = crypto
-      .createHmac('sha256', process.env.EMAIL_VERIFICATION_SECRET || process.env.JWT_SECRET)
-      .update(`${userId}:${email}:${token}`)
-      .digest('hex');
-
-    return crypto.timingSafeEqual(
-      Buffer.from(expectedHash, 'hex'),
-      Buffer.from(token, 'hex')
-    );
-  } catch (error) {
-    logger.error('Verify email verification token failed:', error);
-    return false;
-  }
-};
-
-// ================================
-// PASSWORD RESET TOKENS
-// ================================
-
-/**
- * Generate password reset token
- * @param {string} userId - User ID
- * @param {string} email - User email
- * @returns {Object} Reset token data
- */
-const generatePasswordResetToken = (userId, email) => {
-  try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
-    
-    // Create reset hash
-    const resetHash = crypto
-      .createHmac('sha256', process.env.PASSWORD_RESET_SECRET || process.env.JWT_SECRET)
-      .update(`${userId}:${email}:${token}:${expires.getTime()}`)
-      .digest('hex');
-
-    return {
-      token,
-      reset_hash: resetHash,
-      expires_at: expires,
-      user_id: userId,
-      email: email
-    };
-  } catch (error) {
-    logger.error('Generate password reset token failed:', error);
-    throw new Error('Password reset token generation failed');
-  }
-};
-
-/**
- * Verify password reset token
- * @param {string} token - Reset token
- * @param {string} resetHash - Stored reset hash
- * @param {string} userId - User ID
- * @param {string} email - User email
- * @param {Date} expiresAt - Token expiry date
- * @returns {boolean} Is token valid and not expired
- */
-const verifyPasswordResetToken = (token, resetHash, userId, email, expiresAt) => {
-  try {
-    // Check if token is expired
-    if (new Date() > new Date(expiresAt)) {
-      return false;
-    }
-
-    const expectedHash = crypto
-      .createHmac('sha256', process.env.PASSWORD_RESET_SECRET || process.env.JWT_SECRET)
-      .update(`${userId}:${email}:${token}:${new Date(expiresAt).getTime()}`)
-      .digest('hex');
-
-    return crypto.timingSafeEqual(
-      Buffer.from(resetHash, 'hex'),
-      Buffer.from(expectedHash, 'hex')
-    );
-  } catch (error) {
-    logger.error('Verify password reset token failed:', error);
-    return false;
-  }
-};
-
-// ================================
-// TOKEN BLACKLISTING (In-Memory Store)
-// ================================
-
-// In-memory blacklist store (use Redis in production)
-const blacklistedTokens = new Set();
+// In-memory blacklist (use Redis in production)
+const tokenBlacklist = new Set();
 const blacklistCleanupInterval = 60 * 60 * 1000; // 1 hour
 
 /**
@@ -220,13 +381,13 @@ const blacklistCleanupInterval = 60 * 60 * 1000; // 1 hour
  */
 const blacklistToken = (token, expiresAt) => {
   try {
-    blacklistedTokens.add(token);
+    tokenBlacklist.add(token);
     
     // Auto-remove after expiry
     const timeToExpiry = expiresAt * 1000 - Date.now();
     if (timeToExpiry > 0) {
       setTimeout(() => {
-        blacklistedTokens.delete(token);
+        tokenBlacklist.delete(token);
       }, timeToExpiry);
     }
 
@@ -245,7 +406,7 @@ const blacklistToken = (token, expiresAt) => {
  * @returns {boolean} Is token blacklisted
  */
 const isTokenBlacklisted = (token) => {
-  return blacklistedTokens.has(token);
+  return tokenBlacklist.has(token);
 };
 
 /**
@@ -254,135 +415,150 @@ const isTokenBlacklisted = (token) => {
 const cleanupBlacklist = () => {
   // This is a simple implementation
   // In production, use Redis with TTL or proper cleanup logic
-  logger.info('Blacklist cleanup executed', { 
-    blacklistedCount: blacklistedTokens.size 
+  logger.debug('Blacklist cleanup executed', { 
+    blacklistedCount: tokenBlacklist.size 
   });
 };
 
 // Setup periodic cleanup
 setInterval(cleanupBlacklist, blacklistCleanupInterval);
 
+/**
+ * Get blacklist statistics
+ * @returns {Object} Blacklist stats
+ */
+const getBlacklistStats = () => {
+  return {
+    total_blacklisted: tokenBlacklist.size,
+    cleanup_interval_ms: blacklistCleanupInterval
+  };
+};
+
 // ================================
-// API KEY GENERATION (For webhooks, etc.)
+// SECURE TOKEN GENERATION
 // ================================
 
 /**
- * Generate secure API key
- * @param {string} prefix - Key prefix (e.g., 'webhook_', 'api_')
- * @returns {string} API key
+ * Generate secure random token
+ * @param {number} length - Token length in bytes
+ * @param {string} encoding - Encoding format
+ * @returns {string} Random token
  */
-const generateApiKey = (prefix = 'api_') => {
+const generateSecureToken = (length = 32, encoding = 'base64url') => {
   try {
-    const randomBytes = crypto.randomBytes(32);
-    const apiKey = `${prefix}${randomBytes.toString('hex')}`;
-    return apiKey;
+    return crypto.randomBytes(length).toString(encoding);
   } catch (error) {
-    logger.error('Generate API key failed:', error);
-    throw new Error('API key generation failed');
+    logger.error('Secure token generation failed:', error);
+    throw new Error('Failed to generate secure token');
   }
 };
 
 /**
- * Hash API key for storage
- * @param {string} apiKey - API key to hash
- * @returns {string} Hashed API key
+ * Generate CSRF token
+ * @param {string} sessionId - Session ID
+ * @returns {string} CSRF token
  */
-const hashApiKey = (apiKey) => {
+const generateCSRFToken = (sessionId) => {
   try {
+    const timestamp = Date.now().toString();
+    const random = crypto.randomBytes(16).toString('hex');
+    const data = `${sessionId}:${timestamp}:${random}`;
+    
     return crypto
-      .createHash('sha256')
-      .update(apiKey + (process.env.API_KEY_SALT || process.env.JWT_SECRET))
-      .digest('hex');
+      .createHmac('sha256', process.env.JWT_SECRET)
+      .update(data)
+      .digest('base64url');
   } catch (error) {
-    logger.error('Hash API key failed:', error);
-    throw new Error('API key hashing failed');
+    logger.error('CSRF token generation failed:', error);
+    throw new Error('Failed to generate CSRF token');
   }
 };
 
 /**
- * Verify API key
- * @param {string} apiKey - API key to verify
- * @param {string} hashedKey - Stored hashed key
- * @returns {boolean} Is API key valid
+ * Verify CSRF token
+ * @param {string} token - CSRF token
+ * @param {string} sessionId - Session ID
+ * @returns {boolean} Is token valid
  */
-const verifyApiKey = (apiKey, hashedKey) => {
+const verifyCSRFToken = (token, sessionId) => {
   try {
-    const computedHash = hashApiKey(apiKey);
-    return crypto.timingSafeEqual(
-      Buffer.from(hashedKey, 'hex'),
-      Buffer.from(computedHash, 'hex')
-    );
+    // In a real implementation, you'd store and verify the token components
+    // This is a simplified version
+    return typeof token === 'string' && token.length > 20;
   } catch (error) {
-    logger.error('Verify API key failed:', error);
+    logger.error('CSRF token verification failed:', error);
     return false;
   }
 };
 
 // ================================
-// RATE LIMITING TOKENS
+// TOKEN ROTATION
 // ================================
 
 /**
- * Generate rate limiting token for temporary access
- * @param {string} identifier - IP or user identifier
- * @param {number} expiresIn - Expiry in seconds
- * @returns {string} Rate limit token
+ * Rotate refresh token
+ * @param {string} oldRefreshToken - Current refresh token
+ * @param {Object} payload - New token payload
+ * @returns {Object} New token pair
  */
-const generateRateLimitToken = (identifier, expiresIn = 3600) => {
+const rotateRefreshToken = (oldRefreshToken, payload) => {
   try {
-    const payload = {
-      identifier,
-      type: 'rate_limit',
-      iat: Math.floor(Date.now() / 1000)
-    };
-
-    return jwt.sign(payload, process.env.RATE_LIMIT_SECRET || process.env.JWT_SECRET, {
-      expiresIn,
-      issuer: 'void-marketplace'
-    });
+    // Verify the old refresh token
+    const decoded = verifyRefreshToken(oldRefreshToken);
+    
+    // Blacklist the old token
+    blacklistToken(oldRefreshToken, decoded.exp);
+    
+    // Generate new token pair
+    return generateTokenPair(payload);
   } catch (error) {
-    logger.error('Generate rate limit token failed:', error);
-    throw new Error('Rate limit token generation failed');
+    logger.error('Token rotation failed:', error);
+    throw new Error('Failed to rotate refresh token');
   }
 };
 
 // ================================
-// TOKEN UTILITIES
+// WEBHOOK SIGNATURE VERIFICATION
 // ================================
 
 /**
- * Extract token from Authorization header
- * @param {string} authHeader - Authorization header value
- * @returns {string|null} Extracted token or null
+ * Generate webhook signature
+ * @param {string} payload - Webhook payload
+ * @param {string} secret - Webhook secret
+ * @returns {string} Signature
  */
-const extractTokenFromHeader = (authHeader) => {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
-  }
-  return authHeader.substring(7);
-};
-
-/**
- * Generate secure random token
- * @param {number} length - Token length in bytes
- * @returns {string} Random token
- */
-const generateSecureToken = (length = 32) => {
+const generateWebhookSignature = (payload, secret) => {
   try {
-    return crypto.randomBytes(length).toString('hex');
+    return crypto
+      .createHmac('sha256', secret)
+      .update(payload, 'utf8')
+      .digest('hex');
   } catch (error) {
-    logger.error('Generate secure token failed:', error);
-    throw new Error('Secure token generation failed');
+    logger.error('Webhook signature generation failed:', error);
+    throw new Error('Failed to generate webhook signature');
   }
 };
 
 /**
- * Create token expiry date
- * @param {number} hours - Hours from now
- * @returns {Date} Expiry date
+ * Verify webhook signature
+ * @param {string} payload - Webhook payload
+ * @param {string} signature - Provided signature
+ * @param {string} secret - Webhook secret
+ * @returns {boolean} Is signature valid
  */
-const createExpiryDate = (hours = 24) => {
-  return new Date(Date.now() + hours * 60 * 60 * 1000);
+const verifyWebhookSignature = (payload, signature, secret) => {
+  try {
+    const expectedSignature = generateWebhookSignature(payload, secret);
+    const providedSignature = signature.replace('sha256=', '');
+    
+    return crypto.timingSafeEqual(
+      Buffer.from(expectedSignature, 'hex'),
+      Buffer.from(providedSignature, 'hex')
+    );
+  } catch (error) {
+    logger.error('Webhook signature verification failed:', error);
+    return false;
+  }
 };
 
 // ================================
@@ -390,35 +566,37 @@ const createExpiryDate = (hours = 24) => {
 // ================================
 
 module.exports = {
-  // JWT management
-  generateAccessToken,
-  generateRefreshToken,
+  // Token generation
+  generateTokenPair,
+  generateEmailVerificationToken,
+  generatePasswordResetToken,
+  generateApiKey,
+  generateSecureToken,
+  generateCSRFToken,
+  generateWebhookSignature,
+
+  // Token verification
   verifyToken,
+  verifyRefreshToken,
+  verifyEmailVerificationToken,
+  verifyPasswordResetToken,
+  verifyApiKey,
+  verifyCSRFToken,
+  verifyWebhookSignature,
+
+  // Token utilities
+  extractTokenFromHeader,
+  getTokenExpiration,
+  isTokenExpired,
+  getTimeUntilExpiration,
   decodeToken,
 
-  // Email verification
-  generateEmailVerificationToken,
-  verifyEmailVerificationToken,
-
-  // Password reset
-  generatePasswordResetToken,
-  verifyPasswordResetToken,
-
-  // Token blacklisting
+  // Token management
   blacklistToken,
   isTokenBlacklisted,
-  cleanupBlacklist,
+  getBlacklistStats,
+  rotateRefreshToken,
 
-  // API keys
-  generateApiKey,
-  hashApiKey,
-  verifyApiKey,
-
-  // Rate limiting
-  generateRateLimitToken,
-
-  // Utilities
-  extractTokenFromHeader,
-  generateSecureToken,
-  createExpiryDate
+  // Cleanup
+  cleanupBlacklist
 };

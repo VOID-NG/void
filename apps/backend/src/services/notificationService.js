@@ -1,31 +1,59 @@
 // apps/backend/src/services/notificationService.js
-// Comprehensive notification system for Void Marketplace
+// Complete notification service for VOID Marketplace
 
 const { prisma } = require('../config/db');
+const { NOTIFICATION_TYPE } = require('../config/constants');
 const logger = require('../utils/logger');
-const { NOTIFICATION_TYPE, NOTIFICATION_TEMPLATES } = require('../config/constants');
 const nodemailer = require('nodemailer');
 
 // ================================
 // EMAIL CONFIGURATION
 // ================================
 
+// Email transporter setup
 let emailTransporter = null;
 
 const initializeEmailTransporter = () => {
-  if (!emailTransporter) {
-    emailTransporter = nodemailer.createTransporter({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: process.env.SMTP_PORT || 587,
-      secure: false,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS
-      }
-    });
+  try {
+    if (process.env.EMAIL_SERVICE && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      emailTransporter = nodemailer.createTransporter({
+        service: process.env.EMAIL_SERVICE, // Gmail, Outlook, etc.
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
+        }
+      });
+      logger.info('Email transporter initialized');
+    } else {
+      logger.warn('Email configuration not found, email notifications disabled');
+    }
+  } catch (error) {
+    logger.error('Failed to initialize email transporter:', error);
   }
-  return emailTransporter;
 };
+
+// Initialize email on service load
+initializeEmailTransporter();
+
+// ================================
+// CUSTOM ERROR CLASSES
+// ================================
+
+class NotificationError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'NotificationError';
+    this.statusCode = statusCode;
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NotFoundError';
+    this.statusCode = 404;
+  }
+}
 
 // ================================
 // CORE NOTIFICATION FUNCTIONS
@@ -33,7 +61,7 @@ const initializeEmailTransporter = () => {
 
 /**
  * Create a new notification
- * @param {Object} notificationData - Notification details
+ * @param {Object} notificationData - Notification data
  * @returns {Object} Created notification
  */
 const createNotification = async (notificationData) => {
@@ -45,15 +73,42 @@ const createNotification = async (notificationData) => {
       message,
       metadata = {},
       send_email = false,
-      send_push = false
+      send_push = false,
+      send_sms = false,
+      priority = 'normal'
     } = notificationData;
 
     // Validate required fields
     if (!user_id || !type || !title || !message) {
-      throw new Error('Missing required notification fields');
+      throw new NotificationError('Missing required fields: user_id, type, title, message');
     }
 
-    // Create notification in database
+    // Validate notification type
+    if (!Object.values(NOTIFICATION_TYPE).includes(type)) {
+      throw new NotificationError('Invalid notification type');
+    }
+
+    // Get user preferences
+    const user = await prisma.user.findUnique({
+      where: { id: user_id },
+      select: {
+        email: true,
+        phone: true,
+        notification_preferences: true
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Check user preferences (if they exist)
+    const preferences = user.notification_preferences || {};
+    const shouldSendEmail = send_email && (preferences.email !== false);
+    const shouldSendPush = send_push && (preferences.push !== false);
+    const shouldSendSms = send_sms && (preferences.sms !== false);
+
+    // Create notification record
     const notification = await prisma.notification.create({
       data: {
         user_id,
@@ -61,72 +116,82 @@ const createNotification = async (notificationData) => {
         title,
         message,
         metadata: JSON.stringify(metadata),
-        is_read: false
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            first_name: true,
-            last_name: true,
-            notification_preferences: true
-          }
-        }
+        priority,
+        created_at: new Date()
       }
     });
 
-    logger.info('Notification created', {
+    // Send notifications through various channels
+    const deliveryResults = {};
+
+    // Send email notification
+    if (shouldSendEmail && user.email) {
+      try {
+        deliveryResults.email = await sendEmailNotification({
+          email: user.email,
+          title,
+          message,
+          type,
+          metadata
+        });
+      } catch (error) {
+        logger.error('Email notification failed:', error);
+        deliveryResults.email = { success: false, error: error.message };
+      }
+    }
+
+    // Send push notification
+    if (shouldSendPush) {
+      try {
+        deliveryResults.push = await sendPushNotification({
+          user_id,
+          title,
+          message,
+          type,
+          metadata
+        });
+      } catch (error) {
+        logger.error('Push notification failed:', error);
+        deliveryResults.push = { success: false, error: error.message };
+      }
+    }
+
+    // Send SMS notification
+    if (shouldSendSms && user.phone) {
+      try {
+        deliveryResults.sms = await sendSmsNotification({
+          phone: user.phone,
+          message: `${title}: ${message}`,
+          type
+        });
+      } catch (error) {
+        logger.error('SMS notification failed:', error);
+        deliveryResults.sms = { success: false, error: error.message };
+      }
+    }
+
+    // Update notification with delivery status
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        delivery_status: JSON.stringify(deliveryResults),
+        updated_at: new Date()
+      }
+    });
+
+    logger.info('Notification created and sent', {
       notificationId: notification.id,
       userId: user_id,
-      type
+      type,
+      channels: Object.keys(deliveryResults)
     });
 
-    // Send email if requested and user allows it
-    if (send_email) {
-      await sendEmailNotification(notification);
-    }
-
-    // Send push notification if requested and user allows it
-    if (send_push) {
-      await sendPushNotification(notification);
-    }
-
-    return notification;
-
+    return {
+      ...notification,
+      delivery_results: deliveryResults
+    };
   } catch (error) {
     logger.error('Create notification failed:', error);
-    throw error;
-  }
-};
-
-/**
- * Send bulk notifications to multiple users
- * @param {Array} userIds - Array of user IDs
- * @param {Object} notificationData - Notification details
- * @returns {Array} Created notifications
- */
-const createBulkNotifications = async (userIds, notificationData) => {
-  try {
-    const notifications = [];
-
-    for (const userId of userIds) {
-      const notification = await createNotification({
-        ...notificationData,
-        user_id: userId
-      });
-      notifications.push(notification);
-    }
-
-    logger.info('Bulk notifications created', {
-      count: notifications.length,
-      type: notificationData.type
-    });
-
-    return notifications;
-
-  } catch (error) {
-    logger.error('Bulk notification creation failed:', error);
     throw error;
   }
 };
@@ -135,58 +200,97 @@ const createBulkNotifications = async (userIds, notificationData) => {
  * Get user notifications with pagination
  * @param {string} userId - User ID
  * @param {Object} options - Query options
- * @returns {Object} Notifications and metadata
+ * @returns {Object} Notifications and pagination data
  */
 const getUserNotifications = async (userId, options = {}) => {
   try {
     const {
       page = 1,
-      limit = 20,
-      unread_only = false,
-      type_filter = null
+      limit = 50,
+      type = null,
+      status = 'all', // 'all', 'read', 'unread'
+      category = null
     } = options;
 
     const offset = (page - 1) * limit;
-    
-    const whereClause = { user_id: userId };
-    
-    if (unread_only) {
-      whereClause.is_read = false;
-    }
-    
-    if (type_filter) {
-      whereClause.type = type_filter;
+
+    // Build where clause
+    const where = {
+      user_id: userId
+    };
+
+    if (type) {
+      where.type = type;
     }
 
-    const [notifications, totalCount, unreadCount] = await Promise.all([
+    if (status === 'read') {
+      where.is_read = true;
+    } else if (status === 'unread') {
+      where.is_read = false;
+    }
+
+    if (category) {
+      // Category-based filtering
+      const categoryTypes = getCategoryTypes(category);
+      if (categoryTypes.length > 0) {
+        where.type = { in: categoryTypes };
+      }
+    }
+
+    // Get notifications and total count
+    const [notifications, total, unreadCount] = await Promise.all([
       prisma.notification.findMany({
-        where: whereClause,
+        where,
         orderBy: { created_at: 'desc' },
         skip: offset,
         take: limit
       }),
-      prisma.notification.count({ where: whereClause }),
+      prisma.notification.count({ where }),
       prisma.notification.count({
-        where: { user_id: userId, is_read: false }
+        where: {
+          user_id: userId,
+          is_read: false
+        }
       })
     ]);
 
     return {
-      notifications: notifications.map(notification => ({
+      data: notifications.map(notification => ({
         ...notification,
         metadata: notification.metadata ? JSON.parse(notification.metadata) : {}
       })),
       pagination: {
-        current_page: page,
-        total_pages: Math.ceil(totalCount / limit),
-        total_count: totalCount,
-        per_page: limit
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit),
+        has_more: offset + notifications.length < total
       },
       unread_count: unreadCount
     };
-
   } catch (error) {
     logger.error('Get user notifications failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get unread notification count
+ * @param {string} userId - User ID
+ * @returns {number} Unread count
+ */
+const getUnreadCount = async (userId) => {
+  try {
+    const count = await prisma.notification.count({
+      where: {
+        user_id: userId,
+        is_read: false
+      }
+    });
+
+    return count;
+  } catch (error) {
+    logger.error('Get unread count failed:', error);
     throw error;
   }
 };
@@ -199,24 +303,30 @@ const getUserNotifications = async (userId, options = {}) => {
  */
 const markAsRead = async (notificationId, userId) => {
   try {
-    const notification = await prisma.notification.update({
+    const notification = await prisma.notification.findFirst({
       where: {
         id: notificationId,
         user_id: userId
-      },
+      }
+    });
+
+    if (!notification) {
+      throw new NotFoundError('Notification not found');
+    }
+
+    if (notification.is_read) {
+      return notification; // Already read
+    }
+
+    const updatedNotification = await prisma.notification.update({
+      where: { id: notificationId },
       data: {
         is_read: true,
         read_at: new Date()
       }
     });
 
-    logger.info('Notification marked as read', {
-      notificationId,
-      userId
-    });
-
-    return notification;
-
+    return updatedNotification;
   } catch (error) {
     logger.error('Mark notification as read failed:', error);
     throw error;
@@ -226,30 +336,44 @@ const markAsRead = async (notificationId, userId) => {
 /**
  * Mark all notifications as read for a user
  * @param {string} userId - User ID
+ * @param {Object} filters - Optional filters
  * @returns {Object} Update result
  */
-const markAllAsRead = async (userId) => {
+const markAllAsRead = async (userId, filters = {}) => {
   try {
+    const where = {
+      user_id: userId,
+      is_read: false
+    };
+
+    if (filters.category) {
+      const categoryTypes = getCategoryTypes(filters.category);
+      if (categoryTypes.length > 0) {
+        where.type = { in: categoryTypes };
+      }
+    }
+
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
     const result = await prisma.notification.updateMany({
-      where: {
-        user_id: userId,
-        is_read: false
-      },
+      where,
       data: {
         is_read: true,
         read_at: new Date()
       }
     });
 
-    logger.info('All notifications marked as read', {
+    logger.info('Marked all notifications as read', {
       userId,
-      count: result.count
+      count: result.count,
+      filters
     });
 
     return result;
-
   } catch (error) {
-    logger.error('Mark all notifications as read failed:', error);
+    logger.error('Mark all as read failed:', error);
     throw error;
   }
 };
@@ -258,440 +382,561 @@ const markAllAsRead = async (userId) => {
  * Delete notification
  * @param {string} notificationId - Notification ID
  * @param {string} userId - User ID
- * @returns {Object} Deletion result
+ * @returns {Object} Delete result
  */
 const deleteNotification = async (notificationId, userId) => {
   try {
-    await prisma.notification.delete({
+    const notification = await prisma.notification.findFirst({
       where: {
         id: notificationId,
         user_id: userId
       }
     });
 
-    logger.info('Notification deleted', {
-      notificationId,
-      userId
+    if (!notification) {
+      throw new NotFoundError('Notification not found');
+    }
+
+    await prisma.notification.delete({
+      where: { id: notificationId }
     });
 
     return { success: true };
-
   } catch (error) {
     logger.error('Delete notification failed:', error);
     throw error;
   }
 };
 
-// ================================
-// SPECIFIC NOTIFICATION TYPES
-// ================================
-
 /**
- * Send chat message notification
- * @param {Object} params - Message details
+ * Delete all notifications for a user
+ * @param {string} userId - User ID
+ * @param {Object} filters - Optional filters
+ * @returns {Object} Delete result
  */
-const sendChatMessageNotification = async ({ recipientId, senderId, message, chatId }) => {
+const deleteAllNotifications = async (userId, filters = {}) => {
   try {
-    const sender = await prisma.user.findUnique({
-      where: { id: senderId },
-      select: { first_name: true, last_name: true }
+    const where = {
+      user_id: userId
+    };
+
+    if (filters.category) {
+      const categoryTypes = getCategoryTypes(filters.category);
+      if (categoryTypes.length > 0) {
+        where.type = { in: categoryTypes };
+      }
+    }
+
+    if (filters.type) {
+      where.type = filters.type;
+    }
+
+    if (filters.older_than_days) {
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - parseInt(filters.older_than_days));
+      where.created_at = { lt: cutoffDate };
+    }
+
+    const result = await prisma.notification.deleteMany({
+      where
     });
 
-    const senderName = `${sender.first_name} ${sender.last_name}`;
-    
-    await createNotification({
-      user_id: recipientId,
-      type: NOTIFICATION_TYPE.CHAT_MESSAGE,
-      title: 'New Message',
-      message: `You have a new message from ${senderName}`,
-      metadata: {
-        sender_id: senderId,
-        sender_name: senderName,
-        chat_id: chatId,
-        message_preview: message.length > 50 ? message.substring(0, 50) + '...' : message
-      },
-      send_push: true
+    logger.info('Deleted notifications', {
+      userId,
+      count: result.count,
+      filters
     });
 
+    return result;
   } catch (error) {
-    logger.error('Send chat message notification failed:', error);
-  }
-};
-
-/**
- * Send offer received notification
- * @param {Object} params - Offer details
- */
-const sendOfferReceivedNotification = async ({ vendorId, buyerId, listingId, amount }) => {
-  try {
-    const [buyer, listing] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: buyerId },
-        select: { first_name: true, last_name: true }
-      }),
-      prisma.listing.findUnique({
-        where: { id: listingId },
-        select: { title: true }
-      })
-    ]);
-
-    const buyerName = `${buyer.first_name} ${buyer.last_name}`;
-    
-    await createNotification({
-      user_id: vendorId,
-      type: NOTIFICATION_TYPE.OFFER_RECEIVED,
-      title: 'New Offer Received',
-      message: `${buyerName} made an offer of ${amount} for your ${listing.title}`,
-      metadata: {
-        buyer_id: buyerId,
-        buyer_name: buyerName,
-        listing_id: listingId,
-        listing_title: listing.title,
-        offer_amount: amount
-      },
-      send_email: true,
-      send_push: true
-    });
-
-  } catch (error) {
-    logger.error('Send offer received notification failed:', error);
-  }
-};
-
-/**
- * Send offer status notification
- * @param {Object} params - Offer status details
- */
-const sendOfferStatusNotification = async ({ buyerId, vendorId, listingId, amount, status }) => {
-  try {
-    const [vendor, listing] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: vendorId },
-        select: { first_name: true, last_name: true }
-      }),
-      prisma.listing.findUnique({
-        where: { id: listingId },
-        select: { title: true }
-      })
-    ]);
-
-    const vendorName = `${vendor.first_name} ${vendor.last_name}`;
-    const statusText = status === 'ACCEPTED' ? 'accepted' : 'declined';
-    
-    await createNotification({
-      user_id: buyerId,
-      type: status === 'ACCEPTED' ? NOTIFICATION_TYPE.OFFER_ACCEPTED : NOTIFICATION_TYPE.OFFER_REJECTED,
-      title: `Offer ${statusText.charAt(0).toUpperCase() + statusText.slice(1)}`,
-      message: `Your offer of ${amount} for ${listing.title} has been ${statusText}`,
-      metadata: {
-        vendor_id: vendorId,
-        vendor_name: vendorName,
-        listing_id: listingId,
-        listing_title: listing.title,
-        offer_amount: amount,
-        offer_status: status
-      },
-      send_email: true,
-      send_push: true
-    });
-
-  } catch (error) {
-    logger.error('Send offer status notification failed:', error);
-  }
-};
-
-/**
- * Send payment notification
- * @param {Object} params - Payment details
- */
-const sendPaymentNotification = async ({ vendorId, buyerId, transactionId, amount, listingTitle }) => {
-  try {
-    await createNotification({
-      user_id: vendorId,
-      type: NOTIFICATION_TYPE.PAYMENT_RECEIVED,
-      title: 'Payment Received',
-      message: `You received ${amount} for ${listingTitle}`,
-      metadata: {
-        buyer_id: buyerId,
-        transaction_id: transactionId,
-        amount: amount,
-        listing_title: listingTitle
-      },
-      send_email: true,
-      send_push: true
-    });
-
-  } catch (error) {
-    logger.error('Send payment notification failed:', error);
-  }
-};
-
-/**
- * Send product sold notification
- * @param {Object} params - Sale details
- */
-const sendProductSoldNotification = async ({ vendorId, buyerId, listingId, amount }) => {
-  try {
-    const [buyer, listing] = await Promise.all([
-      prisma.user.findUnique({
-        where: { id: buyerId },
-        select: { first_name: true, last_name: true }
-      }),
-      prisma.listing.findUnique({
-        where: { id: listingId },
-        select: { title: true }
-      })
-    ]);
-
-    const buyerName = `${buyer.first_name} ${buyer.last_name}`;
-    
-    await createNotification({
-      user_id: vendorId,
-      type: NOTIFICATION_TYPE.PRODUCT_SOLD,
-      title: 'Product Sold',
-      message: `Your listing "${listing.title}" has been sold to ${buyerName} for ${amount}`,
-      metadata: {
-        buyer_id: buyerId,
-        buyer_name: buyerName,
-        listing_id: listingId,
-        listing_title: listing.title,
-        sale_amount: amount
-      },
-      send_email: true,
-      send_push: true
-    });
-
-  } catch (error) {
-    logger.error('Send product sold notification failed:', error);
-  }
-};
-
-/**
- * Send admin notification
- * @param {Object} params - Admin notification details
- */
-const sendAdminNotification = async ({ userId, title, message, metadata = {} }) => {
-  try {
-    await createNotification({
-      user_id: userId,
-      type: NOTIFICATION_TYPE.ADMIN_ALERT,
-      title,
-      message,
-      metadata,
-      send_email: true
-    });
-
-  } catch (error) {
-    logger.error('Send admin notification failed:', error);
-  }
-};
-
-/**
- * Send system maintenance notification
- * @param {Object} params - Maintenance details
- */
-const sendMaintenanceNotification = async ({ title, message, startTime, endTime }) => {
-  try {
-    // Get all active users
-    const users = await prisma.user.findMany({
-      where: { status: 'ACTIVE' },
-      select: { id: true }
-    });
-
-    const userIds = users.map(user => user.id);
-
-    await createBulkNotifications(userIds, {
-      type: NOTIFICATION_TYPE.SYSTEM_UPDATE,
-      title,
-      message,
-      metadata: {
-        maintenance_start: startTime,
-        maintenance_end: endTime
-      },
-      send_email: true
-    });
-
-  } catch (error) {
-    logger.error('Send maintenance notification failed:', error);
+    logger.error('Delete all notifications failed:', error);
+    throw error;
   }
 };
 
 // ================================
-// EMAIL NOTIFICATIONS
+// NOTIFICATION CHANNELS
 // ================================
 
 /**
  * Send email notification
- * @param {Object} notification - Notification object
+ * @param {Object} emailData - Email data
+ * @returns {Object} Send result
  */
-const sendEmailNotification = async (notification) => {
+const sendEmailNotification = async (emailData) => {
   try {
-    const transporter = initializeEmailTransporter();
-    
-    if (!transporter || !process.env.SMTP_USER) {
-      logger.warn('Email transporter not configured, skipping email notification');
-      return;
+    if (!emailTransporter) {
+      return { success: false, error: 'Email service not configured' };
     }
 
-    // Check user's email preferences
-    const userPrefs = notification.user.notification_preferences 
-      ? JSON.parse(notification.user.notification_preferences) 
-      : {};
-    
-    if (userPrefs.email === false) {
-      logger.info('User has disabled email notifications', { userId: notification.user_id });
-      return;
-    }
+    const { email, title, message, type, metadata } = emailData;
 
-    const emailTemplate = getEmailTemplate(notification);
-    
+    // Generate email template based on type
+    const emailContent = generateEmailTemplate(title, message, type, metadata);
+
     const mailOptions = {
-      from: `"Void Marketplace" <${process.env.SMTP_USER}>`,
-      to: notification.user.email,
-      subject: notification.title,
-      html: emailTemplate
+      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+      to: email,
+      subject: title,
+      html: emailContent.html,
+      text: emailContent.text
     };
 
-    await transporter.sendMail(mailOptions);
+    const result = await emailTransporter.sendMail(mailOptions);
 
-    logger.info('Email notification sent', {
-      notificationId: notification.id,
-      email: notification.user.email,
-      type: notification.type
-    });
-
+    return {
+      success: true,
+      message_id: result.messageId,
+      sent_at: new Date()
+    };
   } catch (error) {
     logger.error('Send email notification failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
   }
 };
 
 /**
- * Generate email template
- * @param {Object} notification - Notification object
- * @returns {string} HTML email template
+ * Send push notification
+ * @param {Object} pushData - Push notification data
+ * @returns {Object} Send result
  */
-const getEmailTemplate = (notification) => {
-  const metadata = notification.metadata ? JSON.parse(notification.metadata) : {};
-  const userName = `${notification.user.first_name} ${notification.user.last_name}`;
+const sendPushNotification = async (pushData) => {
+  try {
+    // TODO: Integrate with Firebase Cloud Messaging (FCM) or similar
+    // For now, return placeholder
+    
+    const { user_id, title, message, type, metadata } = pushData;
 
-  return `
+    // In a real implementation, you would:
+    // 1. Get user's device tokens from database
+    // 2. Send push notification via FCM/APNS
+    // 3. Handle delivery status and retries
+
+    logger.info('Push notification sent (placeholder)', {
+      user_id,
+      title,
+      type
+    });
+
+    return {
+      success: true,
+      sent_at: new Date(),
+      platform: 'placeholder'
+    };
+  } catch (error) {
+    logger.error('Send push notification failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+/**
+ * Send SMS notification
+ * @param {Object} smsData - SMS data
+ * @returns {Object} Send result
+ */
+const sendSmsNotification = async (smsData) => {
+  try {
+    // TODO: Integrate with Twilio or similar SMS service
+    // For now, return placeholder
+    
+    const { phone, message, type } = smsData;
+
+    logger.info('SMS notification sent (placeholder)', {
+      phone: phone.replace(/\d(?=\d{4})/g, '*'), // Mask phone number
+      type
+    });
+
+    return {
+      success: true,
+      sent_at: new Date(),
+      provider: 'placeholder'
+    };
+  } catch (error) {
+    logger.error('Send SMS notification failed:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+// ================================
+// SPECIALIZED NOTIFICATION FUNCTIONS
+// ================================
+
+/**
+ * Send transaction notification
+ * @param {Object} transactionData - Transaction data
+ */
+const sendTransactionNotification = async (transactionData) => {
+  try {
+    const {
+      buyerId,
+      vendorId,
+      transactionId,
+      amount,
+      listingTitle,
+      status
+    } = transactionData;
+
+    // Notification for buyer
+    await createNotification({
+      user_id: buyerId,
+      type: NOTIFICATION_TYPE.TRANSACTION_UPDATE,
+      title: 'Transaction Update',
+      message: `Your transaction for ${listingTitle} has been ${status}`,
+      metadata: {
+        transaction_id: transactionId,
+        amount,
+        status
+      },
+      send_email: true,
+      send_push: true
+    });
+
+    // Notification for vendor
+    await createNotification({
+      user_id: vendorId,
+      type: NOTIFICATION_TYPE.PAYMENT_RECEIVED,
+      title: 'Payment Update',
+      message: `Payment of $${amount} for ${listingTitle} has been ${status}`,
+      metadata: {
+        transaction_id: transactionId,
+        amount,
+        status
+      },
+      send_email: true,
+      send_push: true
+    });
+  } catch (error) {
+    logger.error('Send transaction notification failed:', error);
+  }
+};
+
+/**
+ * Send listing notification
+ * @param {Object} listingData - Listing data
+ */
+const sendListingNotification = async (listingData) => {
+  try {
+    const {
+      vendorId,
+      listingId,
+      listingTitle,
+      status,
+      reason = null
+    } = listingData;
+
+    const notificationType = status === 'ACTIVE' 
+      ? NOTIFICATION_TYPE.LISTING_APPROVED 
+      : NOTIFICATION_TYPE.LISTING_REJECTED;
+
+    const message = status === 'ACTIVE'
+      ? `Your listing "${listingTitle}" has been approved and is now live`
+      : `Your listing "${listingTitle}" has been rejected${reason ? `: ${reason}` : ''}`;
+
+    await createNotification({
+      user_id: vendorId,
+      type: notificationType,
+      title: `Listing ${status === 'ACTIVE' ? 'Approved' : 'Rejected'}`,
+      message,
+      metadata: {
+        listing_id: listingId,
+        listing_title: listingTitle,
+        status,
+        reason
+      },
+      send_email: true,
+      send_push: true
+    });
+  } catch (error) {
+    logger.error('Send listing notification failed:', error);
+  }
+};
+
+/**
+ * Send vendor verification notification
+ * @param {Object} vendorData - Vendor data
+ */
+const sendVendorVerificationNotification = async (vendorData) => {
+  try {
+    const {
+      vendorId,
+      status, // 'approved' or 'rejected'
+      reason = null
+    } = vendorData;
+
+    const message = status === 'approved'
+      ? 'Congratulations! Your vendor account has been verified'
+      : `Your vendor verification has been rejected${reason ? `: ${reason}` : ''}`;
+
+    await createNotification({
+      user_id: vendorId,
+      type: NOTIFICATION_TYPE.VENDOR_VERIFIED,
+      title: `Vendor Verification ${status === 'approved' ? 'Approved' : 'Rejected'}`,
+      message,
+      metadata: {
+        verification_status: status,
+        reason
+      },
+      send_email: true,
+      send_push: true
+    });
+  } catch (error) {
+    logger.error('Send vendor verification notification failed:', error);
+  }
+};
+
+/**
+ * Handle chat notification
+ * @param {Object} chatData - Chat data
+ */
+const handleChatNotification = async (chatData) => {
+  try {
+    const {
+      chatId,
+      senderId,
+      recipientId,
+      messageType,
+      content,
+      listingTitle
+    } = chatData;
+
+    let message = '';
+    let type = NOTIFICATION_TYPE.CHAT_MESSAGE;
+
+    switch (messageType) {
+      case 'OFFER':
+        message = `New offer received for ${listingTitle}`;
+        type = NOTIFICATION_TYPE.OFFER_RECEIVED;
+        break;
+      case 'COUNTER_OFFER':
+        message = `Counter offer received for ${listingTitle}`;
+        type = NOTIFICATION_TYPE.OFFER_RECEIVED;
+        break;
+      case 'OFFER_ACCEPTED':
+        message = `Your offer for ${listingTitle} was accepted`;
+        type = NOTIFICATION_TYPE.OFFER_ACCEPTED;
+        break;
+      case 'OFFER_REJECTED':
+        message = `Your offer for ${listingTitle} was declined`;
+        type = NOTIFICATION_TYPE.OFFER_REJECTED;
+        break;
+      default:
+        message = `New message about ${listingTitle}`;
+    }
+
+    await createNotification({
+      user_id: recipientId,
+      type,
+      title: 'New Message',
+      message,
+      metadata: {
+        chat_id: chatId,
+        sender_id: senderId,
+        message_type: messageType,
+        listing_title: listingTitle
+      },
+      send_push: true
+    });
+  } catch (error) {
+    logger.error('Handle chat notification failed:', error);
+  }
+};
+
+// ================================
+// UTILITY FUNCTIONS
+// ================================
+
+/**
+ * Get notification types by category
+ * @param {string} category - Category name
+ * @returns {Array} Notification types
+ */
+const getCategoryTypes = (category) => {
+  const categories = {
+    'transactions': [
+      NOTIFICATION_TYPE.PAYMENT_RECEIVED,
+      NOTIFICATION_TYPE.TRANSACTION_UPDATE
+    ],
+    'listings': [
+      NOTIFICATION_TYPE.LISTING_APPROVED,
+      NOTIFICATION_TYPE.LISTING_REJECTED,
+      NOTIFICATION_TYPE.PRODUCT_SOLD
+    ],
+    'chats': [
+      NOTIFICATION_TYPE.CHAT_MESSAGE,
+      NOTIFICATION_TYPE.OFFER_RECEIVED,
+      NOTIFICATION_TYPE.OFFER_ACCEPTED,
+      NOTIFICATION_TYPE.OFFER_REJECTED
+    ],
+    'system': [
+      NOTIFICATION_TYPE.ADMIN_ALERT,
+      NOTIFICATION_TYPE.SYSTEM_UPDATE,
+      NOTIFICATION_TYPE.VENDOR_VERIFIED
+    ]
+  };
+
+  return categories[category] || [];
+};
+
+/**
+ * Generate email template
+ * @param {string} title - Email title
+ * @param {string} message - Email message
+ * @param {string} type - Notification type
+ * @param {Object} metadata - Additional data
+ * @returns {Object} Email content
+ */
+const generateEmailTemplate = (title, message, type, metadata) => {
+  const baseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  
+  const html = `
     <!DOCTYPE html>
     <html>
     <head>
         <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${notification.title}</title>
+        <title>${title}</title>
         <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; text-align: center; }
-            .content { background: #f9f9f9; padding: 30px; }
-            .footer { background: #333; color: white; padding: 20px; text-align: center; font-size: 12px; }
-            .button { display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 10px 0; }
-            .notification-content { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; }
+            .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .logo { font-size: 24px; font-weight: bold; color: #333; }
+            .content { margin-bottom: 30px; }
+            .footer { text-align: center; color: #666; font-size: 12px; }
+            .button { display: inline-block; background-color: #007bff; color: white; text-decoration: none; padding: 10px 20px; border-radius: 4px; margin: 10px 0; }
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>Void Marketplace</h1>
-                <h2>${notification.title}</h2>
+                <div class="logo">VOID Marketplace</div>
             </div>
             <div class="content">
-                <div class="notification-content">
-                    <p>Hello ${userName},</p>
-                    <p>${notification.message}</p>
-                    ${metadata.listing_id ? `
-                        <p><a href="${process.env.FRONTEND_URL}/listings/${metadata.listing_id}" class="button">View Listing</a></p>
-                    ` : ''}
-                    ${metadata.chat_id ? `
-                        <p><a href="${process.env.FRONTEND_URL}/messages/${metadata.chat_id}" class="button">View Message</a></p>
-                    ` : ''}
-                </div>
-                <p>This notification was sent because you have an active account on Void Marketplace. You can manage your notification preferences in your account settings.</p>
+                <h2>${title}</h2>
+                <p>${message}</p>
+                ${getActionButton(type, metadata, baseUrl)}
             </div>
             <div class="footer">
-                <p>&copy; 2024 Void Marketplace. All rights reserved.</p>
-                <p><a href="${process.env.FRONTEND_URL}/settings/notifications" style="color: #ccc;">Notification Preferences</a> | <a href="${process.env.FRONTEND_URL}/support" style="color: #ccc;">Support</a></p>
+                <p>This email was sent by VOID Marketplace. If you no longer wish to receive these emails, you can unsubscribe in your account settings.</p>
             </div>
         </div>
     </body>
     </html>
   `;
+
+  const text = `${title}\n\n${message}\n\nVOID Marketplace`;
+
+  return { html, text };
 };
 
-// ================================
-// PUSH NOTIFICATIONS
-// ================================
-
 /**
- * Send push notification
- * @param {Object} notification - Notification object
+ * Get action button for email template
+ * @param {string} type - Notification type
+ * @param {Object} metadata - Metadata
+ * @param {string} baseUrl - Base URL
+ * @returns {string} Button HTML
  */
-const sendPushNotification = async (notification) => {
-  try {
-    // Check user's push notification preferences
-    const userPrefs = notification.user.notification_preferences 
-      ? JSON.parse(notification.user.notification_preferences) 
-      : {};
-    
-    if (userPrefs.push === false) {
-      logger.info('User has disabled push notifications', { userId: notification.user_id });
-      return;
-    }
-
-    // Get user's push tokens (if implemented)
-    const pushTokens = await prisma.pushToken.findMany({
-      where: { user_id: notification.user_id }
-    }).catch(() => []); // Ignore if table doesn't exist
-
-    if (pushTokens.length === 0) {
-      logger.info('No push tokens found for user', { userId: notification.user_id });
-      return;
-    }
-
-    // TODO: Implement actual push notification sending
-    // This would integrate with Firebase FCM, Apple Push Notifications, etc.
-    logger.info('Push notification would be sent', {
-      notificationId: notification.id,
-      userId: notification.user_id,
-      tokenCount: pushTokens.length
-    });
-
-  } catch (error) {
-    logger.error('Send push notification failed:', error);
+const getActionButton = (type, metadata, baseUrl) => {
+  switch (type) {
+    case NOTIFICATION_TYPE.CHAT_MESSAGE:
+    case NOTIFICATION_TYPE.OFFER_RECEIVED:
+      if (metadata.chat_id) {
+        return `<a href="${baseUrl}/chat/${metadata.chat_id}" class="button">View Message</a>`;
+      }
+      break;
+    case NOTIFICATION_TYPE.TRANSACTION_UPDATE:
+      if (metadata.transaction_id) {
+        return `<a href="${baseUrl}/transactions/${metadata.transaction_id}" class="button">View Transaction</a>`;
+      }
+      break;
+    case NOTIFICATION_TYPE.LISTING_APPROVED:
+      if (metadata.listing_id) {
+        return `<a href="${baseUrl}/listings/${metadata.listing_id}" class="button">View Listing</a>`;
+      }
+      break;
+    default:
+      return `<a href="${baseUrl}" class="button">Visit Marketplace</a>`;
   }
+  return '';
 };
 
 // ================================
-// NOTIFICATION CLEANUP
+// NOTIFICATION PREFERENCES
 // ================================
 
 /**
- * Clean up old notifications
- * @param {number} daysOld - Delete notifications older than this many days
- * @returns {Object} Cleanup result
+ * Get user notification preferences
+ * @param {string} userId - User ID
+ * @returns {Object} User preferences
  */
-const cleanupOldNotifications = async (daysOld = 30) => {
+const getNotificationPreferences = async (userId) => {
   try {
-    const cutoffDate = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
-
-    const result = await prisma.notification.deleteMany({
-      where: {
-        created_at: { lt: cutoffDate },
-        is_read: true
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        notification_preferences: true
       }
     });
 
-    logger.info('Old notifications cleaned up', {
-      deletedCount: result.count,
-      cutoffDate
+    if (!user) {
+      throw new NotFoundError('User not found');
+    }
+
+    // Default preferences if none set
+    const defaultPreferences = {
+      email: true,
+      push: true,
+      sms: false,
+      categories: {
+        transactions: true,
+        listings: true,
+        chats: true,
+        system: true
+      },
+      quiet_hours: {
+        enabled: false,
+        start: '22:00',
+        end: '08:00'
+      }
+    };
+
+    return user.notification_preferences || defaultPreferences;
+  } catch (error) {
+    logger.error('Get notification preferences failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update user notification preferences
+ * @param {string} userId - User ID
+ * @param {Object} preferences - New preferences
+ * @returns {Object} Updated preferences
+ */
+const updateNotificationPreferences = async (userId, preferences) => {
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        notification_preferences: preferences
+      },
+      select: {
+        notification_preferences: true
+      }
     });
 
-    return result;
+    logger.info('Notification preferences updated', { userId });
 
+    return updatedUser.notification_preferences;
   } catch (error) {
-    logger.error('Notification cleanup failed:', error);
+    logger.error('Update notification preferences failed:', error);
     throw error;
   }
 };
@@ -703,23 +948,36 @@ const cleanupOldNotifications = async (daysOld = 30) => {
 module.exports = {
   // Core functions
   createNotification,
-  createBulkNotifications,
   getUserNotifications,
+  getUnreadCount,
   markAsRead,
   markAllAsRead,
   deleteNotification,
+  deleteAllNotifications,
 
-  // Specific notification types
-  sendChatMessageNotification,
-  sendOfferReceivedNotification,
-  sendOfferStatusNotification,
-  sendPaymentNotification,
-  sendProductSoldNotification,
-  sendAdminNotification,
-  sendMaintenanceNotification,
+  // Specialized notifications
+  sendTransactionNotification,
+  sendListingNotification,
+  sendVendorVerificationNotification,
+  handleChatNotification,
 
-  // Utility functions
+  // Channel functions
   sendEmailNotification,
   sendPushNotification,
-  cleanupOldNotifications
+  sendSmsNotification,
+
+  // Preferences
+  getNotificationPreferences,
+  updateNotificationPreferences,
+
+  // Utility functions
+  getCategoryTypes,
+  generateEmailTemplate,
+
+  // Initialization
+  initializeEmailTransporter,
+
+  // Error classes
+  NotificationError,
+  NotFoundError
 };

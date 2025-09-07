@@ -1,58 +1,79 @@
 // apps/backend/src/middleware/errorMiddleware.js
-// Centralized error handling middleware for VOID Marketplace
+// Complete error handling middleware for VOID Marketplace
 
-const { ERROR_CODES } = require('../config/constants');
 const logger = require('../utils/logger');
+const { ERROR_CODES } = require('../config/constants');
 
 // ================================
 // CUSTOM ERROR CLASSES
 // ================================
 
 class AppError extends Error {
-  constructor(message, statusCode, code = null, details = null) {
+  constructor(message, statusCode = 500, errorCode = null) {
     super(message);
+    this.name = this.constructor.name;
     this.statusCode = statusCode;
-    this.code = code;
-    this.details = details;
+    this.errorCode = errorCode;
     this.isOperational = true;
-    
+
     Error.captureStackTrace(this, this.constructor);
   }
 }
 
 class ValidationError extends AppError {
-  constructor(message, details = null) {
-    super(message, 400, ERROR_CODES.VALIDATION_FAILED, details);
+  constructor(message, field = null) {
+    super(message, 400, ERROR_CODES.VALIDATION_REQUIRED_FIELD);
+    this.field = field;
   }
 }
 
 class AuthenticationError extends AppError {
-  constructor(message, code = ERROR_CODES.AUTH_INVALID_CREDENTIALS) {
-    super(message, 401, code);
+  constructor(message = 'Authentication failed') {
+    super(message, 401, ERROR_CODES.AUTH_CREDENTIALS_INVALID);
   }
 }
 
 class AuthorizationError extends AppError {
-  constructor(message, code = ERROR_CODES.AUTH_INSUFFICIENT_PERMISSIONS) {
-    super(message, 403, code);
+  constructor(message = 'Insufficient permissions') {
+    super(message, 403, ERROR_CODES.AUTH_INSUFFICIENT_PERMISSIONS);
   }
 }
 
 class NotFoundError extends AppError {
-  constructor(message = 'Resource not found', resource = null) {
-    super(message, 404, ERROR_CODES.RESOURCE_NOT_FOUND, { resource });
+  constructor(message = 'Resource not found') {
+    super(message, 404);
   }
 }
 
 class ConflictError extends AppError {
-  constructor(message, details = null) {
-    super(message, 409, ERROR_CODES.RESOURCE_CONFLICT, details);
+  constructor(message = 'Resource already exists') {
+    super(message, 409, ERROR_CODES.VALIDATION_DUPLICATE_VALUE);
+  }
+}
+
+class RateLimitError extends AppError {
+  constructor(message = 'Too many requests') {
+    super(message, 429, ERROR_CODES.RATE_LIMIT_EXCEEDED);
+  }
+}
+
+class ExternalServiceError extends AppError {
+  constructor(message = 'External service error', service = null) {
+    super(message, 503, ERROR_CODES.EXTERNAL_API_ERROR);
+    this.service = service;
+  }
+}
+
+class FileUploadError extends AppError {
+  constructor(message = 'File upload failed', reason = null) {
+    super(message, 400, ERROR_CODES.FILE_UPLOAD_FAILED);
+    this.reason = reason;
   }
 }
 
 class BusinessLogicError extends AppError {
-  constructor(message, code, details = null) {
-    super(message, 400, code, details);
+  constructor(message, specificErrorCode = null) {
+    super(message, 422, specificErrorCode || ERROR_CODES.BUSINESS_TRANSACTION_FAILED);
   }
 }
 
@@ -61,271 +82,51 @@ class BusinessLogicError extends AppError {
 // ================================
 
 const formatErrorResponse = (error, req) => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
   const response = {
     success: false,
     error: error.message || 'Internal server error',
+    error_code: error.errorCode || 'INTERNAL_ERROR',
     timestamp: new Date().toISOString(),
     path: req.originalUrl,
     method: req.method
   };
 
-  // Add error code if available
-  if (error.code) {
-    response.code = error.code;
+  // Add additional error details in development
+  if (!isProduction) {
+    response.stack = error.stack;
+    response.details = {
+      name: error.name,
+      statusCode: error.statusCode
+    };
+
+    // Add field-specific validation errors
+    if (error.field) {
+      response.field = error.field;
+    }
+
+    // Add service-specific errors
+    if (error.service) {
+      response.service = error.service;
+    }
+
+    // Add reason for file upload errors
+    if (error.reason) {
+      response.reason = error.reason;
+    }
   }
 
-  // Add details if available
-  if (error.details) {
-    response.details = error.details;
-  }
-
-  // Add request ID for tracking (if available)
+  // Add request ID for tracking
   if (req.requestId) {
-    response.requestId = req.requestId;
+    response.request_id = req.requestId;
   }
 
   return response;
 };
 
 // ================================
-// PRISMA ERROR HANDLER
-// ================================
-
-const handlePrismaError = (error) => {
-  switch (error.code) {
-    case 'P2002':
-      // Unique constraint violation
-      const field = error.meta?.target?.[0] || 'field';
-      return new ConflictError(
-        `A record with this ${field} already exists`,
-        { field, constraint: 'unique' }
-      );
-
-    case 'P2025':
-      // Record not found
-      return new NotFoundError('Record not found');
-
-    case 'P2003':
-      // Foreign key constraint violation
-      return new ValidationError(
-        'Invalid reference to related record',
-        { constraint: 'foreign_key' }
-      );
-
-    case 'P2014':
-      // Required relation violation
-      return new ValidationError(
-        'Required relation is missing',
-        { constraint: 'required_relation' }
-      );
-
-    case 'P2021':
-      // Table does not exist
-      return new AppError('Database configuration error', 500, 'DATABASE_ERROR');
-
-    case 'P2022':
-      // Column does not exist
-      return new AppError('Database schema error', 500, 'DATABASE_ERROR');
-
-    default:
-      // Generic Prisma error
-      logger.error('Unhandled Prisma error:', error);
-      return new AppError('Database operation failed', 500, 'DATABASE_ERROR');
-  }
-};
-
-// ================================
-// MONGOOSE ERROR HANDLER (if using MongoDB)
-// ================================
-
-const handleMongoError = (error) => {
-  if (error.code === 11000) {
-    // Duplicate key error
-    const field = Object.keys(error.keyPattern || {})[0] || 'field';
-    return new ConflictError(
-      `A record with this ${field} already exists`,
-      { field, constraint: 'unique' }
-    );
-  }
-
-  if (error.name === 'ValidationError') {
-    const errors = Object.values(error.errors).map(err => ({
-      field: err.path,
-      message: err.message
-    }));
-    return new ValidationError('Validation failed', { errors });
-  }
-
-  if (error.name === 'CastError') {
-    return new ValidationError(
-      `Invalid ${error.path}: ${error.value}`,
-      { field: error.path, value: error.value }
-    );
-  }
-
-  return new AppError('Database operation failed', 500, 'DATABASE_ERROR');
-};
-
-// ================================
-// VALIDATION ERROR HANDLER
-// ================================
-
-const handleValidationError = (error) => {
-  if (error.isJoi) {
-    // Joi validation error
-    const errors = error.details.map(detail => ({
-      field: detail.path.join('.'),
-      message: detail.message.replace(/["]/g, '')
-    }));
-    
-    return new ValidationError('Validation failed', { errors });
-  }
-
-  if (error.errors && Array.isArray(error.errors)) {
-    // Express-validator errors
-    const errors = error.errors.map(err => ({
-      field: err.param || err.path,
-      message: err.msg,
-      value: err.value
-    }));
-    
-    return new ValidationError('Validation failed', { errors });
-  }
-
-  return new ValidationError(error.message);
-};
-
-// ================================
-// JWT ERROR HANDLER
-// ================================
-
-const handleJWTError = (error) => {
-  if (error.name === 'TokenExpiredError') {
-    return new AuthenticationError('Token has expired', ERROR_CODES.AUTH_TOKEN_EXPIRED);
-  }
-
-  if (error.name === 'JsonWebTokenError') {
-    return new AuthenticationError('Invalid token', ERROR_CODES.AUTH_TOKEN_INVALID);
-  }
-
-  if (error.name === 'NotBeforeError') {
-    return new AuthenticationError('Token not active yet', ERROR_CODES.AUTH_TOKEN_INVALID);
-  }
-
-  return new AuthenticationError('Authentication failed');
-};
-
-// ================================
-// MULTER ERROR HANDLER
-// ================================
-
-const handleMulterError = (error) => {
-  if (error.code === 'LIMIT_FILE_SIZE') {
-    return new ValidationError(
-      'File too large',
-      { 
-        maxSize: error.limit,
-        code: ERROR_CODES.UPLOAD_FILE_TOO_LARGE
-      }
-    );
-  }
-
-  if (error.code === 'LIMIT_FILE_COUNT') {
-    return new ValidationError(
-      'Too many files',
-      { 
-        maxCount: error.limit,
-        code: ERROR_CODES.UPLOAD_FILE_TOO_LARGE
-      }
-    );
-  }
-
-  if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-    return new ValidationError(
-      'Unexpected file field',
-      { 
-        fieldName: error.field,
-        code: ERROR_CODES.UPLOAD_INVALID_TYPE
-      }
-    );
-  }
-
-  return new ValidationError('File upload failed', { code: ERROR_CODES.UPLOAD_FAILED });
-};
-
-// ================================
-// MAIN ERROR HANDLER MIDDLEWARE
-// ================================
-
-const errorHandler = (error, req, res, next) => {
-  let appError = error;
-
-  // Log error details
-  logger.error('Error occurred:', {
-    message: error.message,
-    stack: error.stack,
-    url: req.originalUrl,
-    method: req.method,
-    ip: req.ip,
-    userAgent: req.get('User-Agent'),
-    user: req.user?.id || 'anonymous',
-    body: req.method !== 'GET' ? req.body : undefined
-  });
-
-  // Convert known errors to AppError instances
-  if (!(error instanceof AppError)) {
-    // Prisma errors
-    if (error.code && error.code.startsWith('P')) {
-      appError = handlePrismaError(error);
-    }
-    // Mongoose errors
-    else if (error.name && ['MongoError', 'ValidationError', 'CastError'].includes(error.name)) {
-      appError = handleMongoError(error);
-    }
-    // Joi validation errors
-    else if (error.isJoi || (error.errors && Array.isArray(error.errors))) {
-      appError = handleValidationError(error);
-    }
-    // JWT errors
-    else if (['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError'].includes(error.name)) {
-      appError = handleJWTError(error);
-    }
-    // Multer errors
-    else if (error.code && error.code.startsWith('LIMIT_')) {
-      appError = handleMulterError(error);
-    }
-    // Syntax errors
-    else if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
-      appError = new ValidationError('Invalid JSON syntax');
-    }
-    // Generic errors
-    else {
-      appError = new AppError(
-        process.env.NODE_ENV === 'production' ? 'Something went wrong' : error.message,
-        500
-      );
-    }
-  }
-
-  // Don't leak sensitive information in production
-  if (process.env.NODE_ENV === 'production' && appError.statusCode === 500) {
-    appError.message = 'Internal server error';
-    delete appError.details;
-  }
-
-  // Format error response
-  const errorResponse = formatErrorResponse(appError, req);
-
-  // Add stack trace in development
-  if (process.env.NODE_ENV === 'development') {
-    errorResponse.stack = error.stack;
-  }
-
-  res.status(appError.statusCode || 500).json(errorResponse);
-};
-
-// ================================
-// ASYNC ERROR WRAPPER
+// ASYNC HANDLER WRAPPER
 // ================================
 
 const asyncHandler = (fn) => {
@@ -335,14 +136,249 @@ const asyncHandler = (fn) => {
 };
 
 // ================================
-// NOT FOUND HANDLER
+// MAIN ERROR HANDLER MIDDLEWARE
+// ================================
+
+const errorHandler = (error, req, res, next) => {
+  let err = { ...error };
+  err.message = error.message;
+
+  // Log error details
+  const logData = {
+    error: {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      statusCode: error.statusCode
+    },
+    request: {
+      method: req.method,
+      url: req.originalUrl,
+      ip: req.ip,
+      userAgent: req.get('User-Agent'),
+      userId: req.user?.id,
+      body: sanitizeRequestBody(req.body),
+      query: req.query,
+      params: req.params
+    },
+    timestamp: new Date().toISOString()
+  };
+
+  // Log based on error severity
+  if (error.statusCode >= 500) {
+    logger.error('Server Error:', logData);
+  } else if (error.statusCode >= 400) {
+    logger.warn('Client Error:', logData);
+  } else {
+    logger.info('Error handled:', logData);
+  }
+
+  // Handle specific error types
+  if (error.name === 'PrismaClientKnownRequestError') {
+    err = handlePrismaError(error);
+  } else if (error.name === 'PrismaClientValidationError') {
+    err = new ValidationError('Invalid data provided');
+  } else if (error.name === 'JsonWebTokenError') {
+    err = new AuthenticationError('Invalid token');
+  } else if (error.name === 'TokenExpiredError') {
+    err = new AuthenticationError('Token expired');
+  } else if (error.name === 'MulterError') {
+    err = handleMulterError(error);
+  } else if (error.code === 'ECONNREFUSED') {
+    err = new ExternalServiceError('Service unavailable');
+  } else if (error.code === 'ENOTFOUND') {
+    err = new ExternalServiceError('Service not found');
+  } else if (!error.statusCode) {
+    // Unknown errors default to 500
+    err = new AppError('Internal server error', 500);
+  }
+
+  // Format and send error response
+  const response = formatErrorResponse(err, req);
+  
+  res.status(err.statusCode || 500).json(response);
+};
+
+// ================================
+// SPECIFIC ERROR HANDLERS
+// ================================
+
+const handlePrismaError = (error) => {
+  switch (error.code) {
+    case 'P2002':
+      // Unique constraint violation
+      const field = error.meta?.target?.[0] || 'field';
+      return new ConflictError(`${field} already exists`, field);
+    
+    case 'P2014':
+      // Invalid ID
+      return new ValidationError('Invalid ID provided');
+    
+    case 'P2003':
+      // Foreign key constraint violation
+      return new ValidationError('Referenced resource does not exist');
+    
+    case 'P2025':
+      // Record not found
+      return new NotFoundError('Record not found');
+    
+    case 'P2021':
+      // Table does not exist
+      return new AppError('Database configuration error', 500);
+    
+    case 'P2022':
+      // Column does not exist
+      return new AppError('Database schema error', 500);
+    
+    default:
+      return new AppError('Database operation failed', 500, ERROR_CODES.DATABASE_QUERY_ERROR);
+  }
+};
+
+const handleMulterError = (error) => {
+  switch (error.code) {
+    case 'LIMIT_FILE_SIZE':
+      return new FileUploadError('File too large', 'size_limit');
+    
+    case 'LIMIT_FILE_COUNT':
+      return new FileUploadError('Too many files', 'count_limit');
+    
+    case 'LIMIT_UNEXPECTED_FILE':
+      return new FileUploadError('Unexpected file field', 'unexpected_field');
+    
+    case 'LIMIT_FIELD_KEY':
+      return new FileUploadError('Field name too long', 'field_name');
+    
+    case 'LIMIT_FIELD_VALUE':
+      return new FileUploadError('Field value too long', 'field_value');
+    
+    case 'LIMIT_FIELD_COUNT':
+      return new FileUploadError('Too many fields', 'field_count');
+    
+    case 'LIMIT_PART_COUNT':
+      return new FileUploadError('Too many parts', 'part_count');
+    
+    default:
+      return new FileUploadError('File upload failed', 'unknown');
+  }
+};
+
+// ================================
+// VALIDATION ERROR HANDLER
+// ================================
+
+const handleValidationError = (error) => {
+  if (error.details) {
+    // Joi validation error
+    const message = error.details[0].message;
+    const field = error.details[0].path?.[0];
+    return new ValidationError(message, field);
+  }
+  
+  return new ValidationError(error.message);
+};
+
+// ================================
+// 404 HANDLER
 // ================================
 
 const notFoundHandler = (req, res, next) => {
-  const error = new NotFoundError(
-    `Route ${req.method} ${req.originalUrl} not found`
-  );
+  const error = new NotFoundError(`Route ${req.originalUrl} not found`);
   next(error);
+};
+
+// ================================
+// UTILITY FUNCTIONS
+// ================================
+
+const sanitizeRequestBody = (body) => {
+  if (!body || typeof body !== 'object') {
+    return body;
+  }
+
+  const sanitized = { ...body };
+  
+  // Remove sensitive fields
+  const sensitiveFields = ['password', 'password_hash', 'token', 'secret', 'api_key'];
+  sensitiveFields.forEach(field => {
+    if (sanitized[field]) {
+      sanitized[field] = '[REDACTED]';
+    }
+  });
+
+  return sanitized;
+};
+
+// ================================
+// ERROR REPORTING
+// ================================
+
+const reportError = async (error, context = {}) => {
+  try {
+    // Log to external error reporting service (Sentry, Bugsnag, etc.)
+    if (process.env.SENTRY_DSN && error.statusCode >= 500) {
+      // Report to Sentry in production
+      // Sentry.captureException(error, { extra: context });
+    }
+
+    // Store critical errors in database for analysis
+    if (error.statusCode >= 500) {
+      await prisma.errorLog.create({
+        data: {
+          error_type: error.name,
+          error_message: error.message,
+          stack_trace: error.stack,
+          context: JSON.stringify(context),
+          created_at: new Date()
+        }
+      }).catch(() => {
+        // Ignore database errors in error handler
+      });
+    }
+  } catch (reportingError) {
+    logger.error('Error reporting failed:', reportingError);
+  }
+};
+
+// ================================
+// GRACEFUL SHUTDOWN HANDLERS
+// ================================
+
+const handleUncaughtException = (error) => {
+  logger.fatal('Uncaught Exception:', error);
+  
+  // Report the error
+  reportError(error, { type: 'uncaught_exception' });
+  
+  // Graceful shutdown
+  process.exit(1);
+};
+
+const handleUnhandledRejection = (reason, promise) => {
+  logger.fatal('Unhandled Rejection at:', promise, 'reason:', reason);
+  
+  // Report the error
+  reportError(new Error(reason), { 
+    type: 'unhandled_rejection',
+    promise: promise.toString()
+  });
+  
+  // Graceful shutdown
+  process.exit(1);
+};
+
+// Set up global error handlers
+process.on('uncaughtException', handleUncaughtException);
+process.on('unhandledRejection', handleUnhandledRejection);
+
+// ================================
+// REQUEST ID MIDDLEWARE
+// ================================
+
+const addRequestId = (req, res, next) => {
+  req.requestId = require('crypto').randomBytes(16).toString('hex');
+  res.setHeader('X-Request-ID', req.requestId);
+  next();
 };
 
 // ================================
@@ -357,17 +393,21 @@ module.exports = {
   AuthorizationError,
   NotFoundError,
   ConflictError,
+  RateLimitError,
+  ExternalServiceError,
+  FileUploadError,
   BusinessLogicError,
-  
-  // Middleware
+
+  // Middleware functions
   errorHandler,
-  asyncHandler,
   notFoundHandler,
-  
+  asyncHandler,
+  addRequestId,
+
   // Utility functions
   formatErrorResponse,
-  handlePrismaError,
   handleValidationError,
-  handleJWTError,
-  handleMulterError
+  handlePrismaError,
+  handleMulterError,
+  reportError
 };

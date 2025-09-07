@@ -1,37 +1,54 @@
 // apps/backend/src/services/listingService.js
-// Listing service layer for VOID Marketplace
+// Complete Listing service layer for VOID Marketplace
 
 const { prisma } = require('../config/db');
-const { 
-  LISTING_STATUS, 
-  LISTING_CONDITION, 
-  USER_ROLES, 
-  BUSINESS_RULES,
-  SUBSCRIPTION_FEATURES,
-  ERROR_CODES 
-} = require('../config/constants');
-const { 
-  NotFoundError, 
-  ValidationError, 
-  BusinessLogicError, 
-  AuthorizationError 
-} = require('../middleware/errorMiddleware');
-const { organizeUploadedFiles, deleteFile } = require('../middleware/uploadMiddleware');
+const { LISTING_STATUS, USER_ROLES, BUSINESS_RULES } = require('../config/constants');
+const { generateImageEmbedding } = require('../utils/imageEmbeddingUtils');
 const logger = require('../utils/logger');
-const { generateListingEmbeddings: generateListingEmbeddingsAI } = require('../utils/imageEmbeddingUtils');
+const sharp = require('sharp');
+const path = require('path');
+const fs = require('fs').promises;
+
+// ================================
+// CUSTOM ERROR CLASSES
+// ================================
+
+class ListingError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.name = 'ListingError';
+    this.statusCode = statusCode;
+  }
+}
+
+class NotFoundError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NotFoundError';
+    this.statusCode = 404;
+  }
+}
+
+class UnauthorizedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'UnauthorizedError';
+    this.statusCode = 403;
+  }
+}
 
 // ================================
 // LISTING CREATION
 // ================================
 
 /**
- * Create a new listing with media uploads
+ * Create a new listing
  * @param {Object} listingData - Listing data
- * @param {Object} user - Current user
- * @param {Array} files - Uploaded files
+ * @param {Object} files - Uploaded files
+ * @param {string} userId - User ID
  * @returns {Object} Created listing
  */
-const createListing = async (listingData, user, files = []) => {
+const createListing = async (listingData, files = {}, userId) => {
   try {
     const {
       title,
@@ -48,140 +65,360 @@ const createListing = async (listingData, user, files = []) => {
       is_negotiable = true
     } = listingData;
 
-    // Validate vendor permissions
-    if (user.role !== USER_ROLES.VENDOR && !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-      throw new AuthorizationError('Only vendors can create listings');
+    // Validate required fields
+    if (!title || !description || !price || !condition || !category_id) {
+      throw new ListingError('Missing required fields: title, description, price, condition, category_id');
     }
 
-    // Check vendor verification
-    if (user.role === USER_ROLES.VENDOR && !user.vendor_verified) {
-      throw new BusinessLogicError(
-        'Vendor verification required to create listings',
-        ERROR_CODES.BUSINESS_LISTING_LIMIT_EXCEEDED
-      );
+    // Validate price
+    if (price <= 0) {
+      throw new ListingError('Price must be greater than 0');
     }
 
-    // Check listing limits based on subscription
-    await checkListingLimits(user.id);
+    // Validate quantity
+    if (quantity < 1) {
+      throw new ListingError('Quantity must be at least 1');
+    }
 
-    // Validate category exists
+    // Check if category exists
     const category = await prisma.category.findUnique({
       where: { id: category_id }
     });
 
     if (!category) {
-      throw new NotFoundError('Category not found');
+      throw new ListingError('Invalid category ID');
     }
 
-    // Validate price limits
-    const priceValue = parseFloat(price);
-    if (priceValue < BUSINESS_RULES.MIN_LISTING_PRICE || priceValue > BUSINESS_RULES.MAX_LISTING_PRICE) {
-      throw new ValidationError(
-        `Price must be between $${BUSINESS_RULES.MIN_LISTING_PRICE} and $${BUSINESS_RULES.MAX_LISTING_PRICE}`
-      );
-    }
+    // Create listing
+    const listing = await prisma.listing.create({
+      data: {
+        title: title.trim(),
+        description: description.trim(),
+        price: parseFloat(price),
+        condition,
+        category_id,
+        vendor_id: userId,
+        quantity: parseInt(quantity),
+        sku: sku?.trim() || null,
+        tags: Array.isArray(tags) ? tags : [],
+        weight: weight ? parseFloat(weight) : null,
+        dimensions: dimensions || null,
+        location: location?.trim() || null,
+        is_negotiable: Boolean(is_negotiable),
+        status: LISTING_STATUS.DRAFT
+      },
+      include: {
+        category: true,
+        vendor: {
+          select: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+            business_name: true,
+            vendor_verified: true
+          }
+        }
+      }
+    });
 
     // Process uploaded files
-    let organizedFiles = { images: [], videos: [], models: [] };
-    if (files && files.length > 0) {
-      organizedFiles = await organizeUploadedFiles(files, user.id);
+    if (files) {
+      await processListingFiles(listing.id, files);
     }
 
-    // Create listing in transaction
-    const listing = await prisma.$transaction(async (tx) => {
-      // Create the listing
-      const newListing = await tx.listing.create({
-        data: {
-          title: title.trim(),
-          description: description.trim(),
-          price: priceValue,
-          condition,
-          category_id,
-          vendor_id: user.id,
-          quantity,
-          sku: sku?.trim() || null,
-          tags: tags.slice(0, BUSINESS_RULES.MAX_TAGS_PER_LISTING),
-          weight: weight ? parseFloat(weight) : null,
-          dimensions: dimensions || null,
-          location: location?.trim() || null,
-          is_negotiable,
-          status: user.role === USER_ROLES.VENDOR ? LISTING_STATUS.PENDING_APPROVAL : LISTING_STATUS.ACTIVE
-        }
-      });
-
-      // Create image records
-      if (organizedFiles.images.length > 0) {
-        await tx.listingImage.createMany({
-          data: organizedFiles.images.map((image, index) => ({
-            listing_id: newListing.id,
-            url: image.processedUrl || image.url,
-            alt_text: `${title} - Image ${index + 1}`,
-            is_primary: index === 0,
-            order_pos: index,
-            file_size: image.size
-          }))
-        });
-      }
-
-      // Create video records
-      if (organizedFiles.videos.length > 0) {
-        await tx.listingVideo.createMany({
-          data: organizedFiles.videos.map((video) => ({
-            listing_id: newListing.id,
-            url: video.url,
-            thumbnail_url: null, // TODO: Generate video thumbnail
-            file_size: video.size
-          }))
-        });
-      }
-
-      // Create 3D model records
-      if (organizedFiles.models.length > 0) {
-        await tx.listing3DModel.createMany({
-          data: organizedFiles.models.map((model) => ({
-            listing_id: newListing.id,
-            url: model.url,
-            file_type: model.mimeType,
-            file_size: model.size
-          }))
-        });
-      }
-
-      return newListing;
+    // Generate search embeddings for text content
+    await generateListingEmbeddings(listing.id, {
+      title,
+      description,
+      tags,
+      category: category.name
     });
 
-    // Generate embeddings asynchronously (don't wait for completion)
-    try {
-      const imagesForAI = (organizedFiles.images || []).map((img, index) => ({
-        url: img.processedUrl || img.url,
-        is_primary: index === 0
-      }));
-      generateListingEmbeddingsAI(listing.id, { title, description, tags, images: imagesForAI })
-        .catch(error => {
-          logger.error('Failed to generate AI embeddings for listing:', error);
-        });
-    } catch (e) {
-      logger.warn('Skipped AI embeddings due to preparation error', { error: e.message });
-    }
-
-    // Log the creation
     logger.info('Listing created successfully', {
       listingId: listing.id,
-      vendorId: user.id,
-      title,
-      mediaCount: {
-        images: organizedFiles.images.length,
-        videos: organizedFiles.videos.length,
-        models: organizedFiles.models.length
-      }
+      vendorId: userId,
+      title: title.substring(0, 50)
     });
 
-    // Return listing with relations
-    return await getListingById(listing.id, user);
-
+    return listing;
   } catch (error) {
-    logger.error('Listing creation failed:', error);
+    logger.error('Create listing failed:', error);
     throw error;
+  }
+};
+
+/**
+ * Process uploaded files for listing
+ * @param {string} listingId - Listing ID
+ * @param {Object} files - Uploaded files
+ */
+const processListingFiles = async (listingId, files) => {
+  try {
+    const { images = [], videos = [], models_3d = [] } = files;
+
+    // Process images
+    if (images && images.length > 0) {
+      if (images.length > BUSINESS_RULES.MAX_IMAGES_PER_LISTING) {
+        throw new ListingError(`Maximum ${BUSINESS_RULES.MAX_IMAGES_PER_LISTING} images allowed per listing`);
+      }
+
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        const processedImage = await processAndSaveImage(image, listingId);
+        
+        await prisma.listingImage.create({
+          data: {
+            listing_id: listingId,
+            url: processedImage.url,
+            alt_text: processedImage.alt_text,
+            is_primary: i === 0, // First image is primary
+            order_pos: i,
+            file_size: processedImage.file_size
+          }
+        });
+
+        // Generate image embeddings for search
+        if (i === 0) { // Only for primary image
+          await generateImageEmbedding(processedImage.buffer, listingId);
+        }
+      }
+    }
+
+    // Process videos
+    if (videos && videos.length > 0) {
+      if (videos.length > BUSINESS_RULES.MAX_VIDEOS_PER_LISTING) {
+        throw new ListingError(`Maximum ${BUSINESS_RULES.MAX_VIDEOS_PER_LISTING} video allowed per listing`);
+      }
+
+      for (const video of videos) {
+        const processedVideo = await processAndSaveVideo(video, listingId);
+        
+        await prisma.listingVideo.create({
+          data: {
+            listing_id: listingId,
+            url: processedVideo.url,
+            thumbnail_url: processedVideo.thumbnail_url,
+            duration: processedVideo.duration,
+            file_size: processedVideo.file_size
+          }
+        });
+      }
+    }
+
+    // Process 3D models
+    if (models_3d && models_3d.length > 0) {
+      if (models_3d.length > BUSINESS_RULES.MAX_3D_MODELS_PER_LISTING) {
+        throw new ListingError(`Maximum ${BUSINESS_RULES.MAX_3D_MODELS_PER_LISTING} 3D models allowed per listing`);
+      }
+
+      for (const model of models_3d) {
+        const processedModel = await processAndSave3DModel(model, listingId);
+        
+        await prisma.listing3DModel.create({
+          data: {
+            listing_id: listingId,
+            url: processedModel.url,
+            file_type: processedModel.file_type,
+            file_size: processedModel.file_size
+          }
+        });
+      }
+    }
+  } catch (error) {
+    logger.error('Process listing files failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Process and save image with optimization
+ * @param {Object} imageFile - Image file
+ * @param {string} listingId - Listing ID
+ * @returns {Object} Processed image data
+ */
+const processAndSaveImage = async (imageFile, listingId) => {
+  try {
+    const { buffer, mimetype, originalname } = imageFile;
+    
+    // Validate image type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(mimetype)) {
+      throw new ListingError('Only JPEG, PNG, and WebP images are allowed');
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const extension = path.extname(originalname);
+    const filename = `${listingId}_${timestamp}${extension}`;
+    const relativePath = `/uploads/images/${filename}`;
+    const fullPath = path.join(process.cwd(), 'uploads', 'images', filename);
+
+    // Optimize image with Sharp
+    const optimizedBuffer = await sharp(buffer)
+      .resize(1200, 1200, { 
+        fit: 'inside',
+        withoutEnlargement: true 
+      })
+      .jpeg({ 
+        quality: 85,
+        progressive: true 
+      })
+      .toBuffer();
+
+    // Save to disk
+    await fs.writeFile(fullPath, optimizedBuffer);
+
+    // Generate thumbnail
+    const thumbnailBuffer = await sharp(buffer)
+      .resize(300, 300, { 
+        fit: 'cover' 
+      })
+      .jpeg({ 
+        quality: 80 
+      })
+      .toBuffer();
+
+    const thumbnailFilename = `thumb_${filename}`;
+    const thumbnailPath = path.join(process.cwd(), 'uploads', 'images', thumbnailFilename);
+    await fs.writeFile(thumbnailPath, thumbnailBuffer);
+
+    return {
+      url: relativePath,
+      thumbnail_url: `/uploads/images/${thumbnailFilename}`,
+      alt_text: originalname,
+      file_size: optimizedBuffer.length,
+      buffer: optimizedBuffer
+    };
+  } catch (error) {
+    logger.error('Process image failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Process and save video
+ * @param {Object} videoFile - Video file
+ * @param {string} listingId - Listing ID
+ * @returns {Object} Processed video data
+ */
+const processAndSaveVideo = async (videoFile, listingId) => {
+  try {
+    const { buffer, mimetype, originalname } = videoFile;
+    
+    // Validate video type
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
+    if (!allowedTypes.includes(mimetype)) {
+      throw new ListingError('Only MP4, WebM, and QuickTime videos are allowed');
+    }
+
+    // Check file size (max 100MB)
+    const maxSize = 100 * 1024 * 1024; // 100MB
+    if (buffer.length > maxSize) {
+      throw new ListingError('Video file size must be less than 100MB');
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const extension = path.extname(originalname);
+    const filename = `${listingId}_${timestamp}${extension}`;
+    const relativePath = `/uploads/videos/${filename}`;
+    const fullPath = path.join(process.cwd(), 'uploads', 'videos', filename);
+
+    // Save to disk
+    await fs.writeFile(fullPath, buffer);
+
+    // TODO: Generate video thumbnail using ffmpeg
+    // For now, return placeholder thumbnail
+    const thumbnailUrl = '/uploads/images/video-placeholder.jpg';
+
+    return {
+      url: relativePath,
+      thumbnail_url: thumbnailUrl,
+      duration: null, // TODO: Extract duration with ffmpeg
+      file_size: buffer.length
+    };
+  } catch (error) {
+    logger.error('Process video failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Process and save 3D model
+ * @param {Object} modelFile - 3D model file
+ * @param {string} listingId - Listing ID
+ * @returns {Object} Processed model data
+ */
+const processAndSave3DModel = async (modelFile, listingId) => {
+  try {
+    const { buffer, mimetype, originalname } = modelFile;
+    
+    // Validate model type
+    const allowedTypes = ['model/gltf-binary', 'application/octet-stream'];
+    const allowedExtensions = ['.glb', '.obj', '.gltf'];
+    const extension = path.extname(originalname).toLowerCase();
+    
+    if (!allowedExtensions.includes(extension)) {
+      throw new ListingError('Only GLB, OBJ, and GLTF 3D models are allowed');
+    }
+
+    // Check file size (max 50MB)
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (buffer.length > maxSize) {
+      throw new ListingError('3D model file size must be less than 50MB');
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const filename = `${listingId}_${timestamp}${extension}`;
+    const relativePath = `/uploads/models/${filename}`;
+    const fullPath = path.join(process.cwd(), 'uploads', 'models', filename);
+
+    // Save to disk
+    await fs.writeFile(fullPath, buffer);
+
+    return {
+      url: relativePath,
+      file_type: extension.substring(1), // Remove dot
+      file_size: buffer.length
+    };
+  } catch (error) {
+    logger.error('Process 3D model failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Generate embeddings for listing search
+ * @param {string} listingId - Listing ID
+ * @param {Object} textData - Text data for embedding
+ */
+const generateListingEmbeddings = async (listingId, textData) => {
+  try {
+    const { title, description, tags, category } = textData;
+    
+    // Combine text for embedding
+    const combinedText = `${title} ${description} ${tags.join(' ')} ${category}`;
+    
+    // Generate embedding (placeholder - implement with OpenAI or HuggingFace)
+    const embedding = await generateTextEmbedding(combinedText);
+    
+    if (embedding) {
+      await prisma.listingEmbedding.create({
+        data: {
+          listing_id: listingId,
+          embedding_type: 'text',
+          embedding_vector: JSON.stringify(embedding),
+          source_content: combinedText,
+          confidence_score: 1.0,
+          model_version: 'text-embedding-ada-002'
+        }
+      });
+    }
+  } catch (error) {
+    logger.error('Generate listing embeddings failed:', error);
+    // Don't throw error - embeddings are optional
   }
 };
 
@@ -190,35 +427,30 @@ const createListing = async (listingData, user, files = []) => {
 // ================================
 
 /**
- * Get listing by ID with full details
+ * Get listing by ID
  * @param {string} listingId - Listing ID
- * @param {Object} user - Current user (optional)
- * @returns {Object} Listing details
+ * @param {string} userId - User ID (optional)
+ * @returns {Object} Listing data
  */
-const getListingById = async (listingId, user = null) => {
+const getListingById = async (listingId, userId = null) => {
   try {
     const listing = await prisma.listing.findUnique({
       where: { id: listingId },
       include: {
+        category: true,
         vendor: {
           select: {
             id: true,
             username: true,
             first_name: true,
             last_name: true,
-            avatar_url: true,
             business_name: true,
             vendor_verified: true,
-            created_at: true,
-            _count: {
-              select: {
-                listings: true,
-                reviews_received: true
-              }
-            }
+            avatar_url: true,
+            location: true,
+            created_at: true
           }
         },
-        category: true,
         images: {
           orderBy: { order_pos: 'asc' }
         },
@@ -228,7 +460,6 @@ const getListingById = async (listingId, user = null) => {
           include: {
             reviewer: {
               select: {
-                id: true,
                 username: true,
                 first_name: true,
                 avatar_url: true
@@ -241,8 +472,7 @@ const getListingById = async (listingId, user = null) => {
         _count: {
           select: {
             reviews: true,
-            interactions: true,
-            chats: true
+            interactions: true
           }
         }
       }
@@ -252,137 +482,147 @@ const getListingById = async (listingId, user = null) => {
       throw new NotFoundError('Listing not found');
     }
 
-    // Check visibility permissions
-    if (listing.status === LISTING_STATUS.DRAFT && listing.vendor_id !== user?.id && !['ADMIN', 'SUPER_ADMIN'].includes(user?.role)) {
-      throw new NotFoundError('Listing not found');
+    // Check if user can view this listing
+    if (listing.status !== LISTING_STATUS.ACTIVE && listing.vendor_id !== userId) {
+      // Only vendor and admins can view non-active listings
+      throw new UnauthorizedError('You cannot view this listing');
     }
 
-    // Increment view count if not the owner
-    if (user && user.id !== listing.vendor_id) {
-      await incrementViewCount(listingId, user.id);
+    // Increment view count if not the vendor
+    if (userId && userId !== listing.vendor_id) {
+      await prisma.listing.update({
+        where: { id: listingId },
+        data: { 
+          views_count: { increment: 1 }
+        }
+      });
+
+      // Track user interaction
+      await prisma.userInteraction.create({
+        data: {
+          user_id: userId,
+          listing_id: listingId,
+          interaction_type: 'VIEW'
+        }
+      }).catch(() => {}); // Ignore duplicate errors
     }
 
     // Calculate average rating
-    const avgRating = await prisma.review.aggregate({
-      where: { listing_id: listingId },
-      _avg: { rating: true },
-      _count: { rating: true }
-    });
+    const avgRating = listing.reviews.length > 0 
+      ? listing.reviews.reduce((sum, review) => sum + review.rating, 0) / listing.reviews.length
+      : 0;
 
     return {
       ...listing,
-      average_rating: avgRating._avg.rating || 0,
-      review_count: avgRating._count.rating || 0,
-      is_owner: user?.id === listing.vendor_id,
-      can_edit: user?.id === listing.vendor_id || ['ADMIN', 'SUPER_ADMIN'].includes(user?.role)
+      average_rating: parseFloat(avgRating.toFixed(1)),
+      review_count: listing._count.reviews,
+      view_count: listing.views_count
     };
-
   } catch (error) {
-    logger.error('Get listing failed:', error);
+    logger.error('Get listing by ID failed:', error);
     throw error;
   }
 };
 
 /**
- * Get paginated listings with filters
+ * Get listings with filters and pagination
  * @param {Object} filters - Search filters
  * @param {Object} pagination - Pagination options
- * @param {Object} user - Current user (optional)
- * @returns {Object} Paginated listings
+ * @returns {Object} Listings and pagination data
  */
-const getListings = async (filters = {}, pagination = {}, user = null) => {
+const getListings = async (filters = {}, pagination = {}) => {
   try {
     const {
-      search,
       category_id,
       vendor_id,
       condition,
       min_price,
       max_price,
       location,
-      is_negotiable,
-      is_featured,
-      status,
-      tags
+      search_query,
+      status = LISTING_STATUS.ACTIVE,
+      is_featured
     } = filters;
 
     const {
       page = 1,
-      limit = 20,
+      limit = 24,
       sort_by = 'created_at',
       sort_order = 'desc'
     } = pagination;
 
-    const skip = (page - 1) * limit;
-
     // Build where clause
     const where = {
-      AND: [
-        // Status filter (public only sees active listings)
-        status ? { status } : (
-          ['ADMIN', 'SUPER_ADMIN'].includes(user?.role) 
-            ? {} 
-            : { status: LISTING_STATUS.ACTIVE }
-        ),
-        
-        // Search in title and description
-        search ? {
-          OR: [
-            { title: { contains: search, mode: 'insensitive' } },
-            { description: { contains: search, mode: 'insensitive' } },
-            { tags: { has: search } }
-          ]
-        } : {},
-
-        // Category filter
-        category_id ? { category_id } : {},
-
-        // Vendor filter
-        vendor_id ? { vendor_id } : {},
-
-        // Condition filter
-        condition ? { condition } : {},
-
-        // Price range
-        min_price ? { price: { gte: parseFloat(min_price) } } : {},
-        max_price ? { price: { lte: parseFloat(max_price) } } : {},
-
-        // Location filter
-        location ? { location: { contains: location, mode: 'insensitive' } } : {},
-
-        // Negotiable filter
-        is_negotiable !== undefined ? { is_negotiable: Boolean(is_negotiable) } : {},
-
-        // Featured filter
-        is_featured !== undefined ? { is_featured: Boolean(is_featured) } : {},
-
-        // Tags filter
-        tags ? { tags: { hasSome: Array.isArray(tags) ? tags : [tags] } } : {}
-      ]
+      status
     };
 
-    // Build order by clause
-    const orderBy = {};
-    orderBy[sort_by] = sort_order;
+    if (category_id) {
+      where.category_id = category_id;
+    }
 
-    // Execute query
+    if (vendor_id) {
+      where.vendor_id = vendor_id;
+    }
+
+    if (condition) {
+      where.condition = condition;
+    }
+
+    if (min_price || max_price) {
+      where.price = {};
+      if (min_price) where.price.gte = parseFloat(min_price);
+      if (max_price) where.price.lte = parseFloat(max_price);
+    }
+
+    if (location) {
+      where.location = {
+        contains: location,
+        mode: 'insensitive'
+      };
+    }
+
+    if (search_query) {
+      where.OR = [
+        {
+          title: {
+            contains: search_query,
+            mode: 'insensitive'
+          }
+        },
+        {
+          description: {
+            contains: search_query,
+            mode: 'insensitive'
+          }
+        },
+        {
+          tags: {
+            hasSome: [search_query]
+          }
+        }
+      ];
+    }
+
+    if (is_featured !== undefined) {
+      where.is_featured = Boolean(is_featured);
+    }
+
+    // Calculate offset
+    const offset = (page - 1) * limit;
+
+    // Get listings and total count
     const [listings, total] = await Promise.all([
       prisma.listing.findMany({
         where,
         include: {
+          category: {
+            select: { name: true }
+          },
           vendor: {
             select: {
-              id: true,
               username: true,
               business_name: true,
-              avatar_url: true,
               vendor_verified: true
-            }
-          },
-          category: {
-            select: {
-              id: true,
-              name: true
             }
           },
           images: {
@@ -391,47 +631,29 @@ const getListings = async (filters = {}, pagination = {}, user = null) => {
           },
           _count: {
             select: {
-              reviews: true,
-              interactions: true
+              reviews: true
             }
           }
         },
-        orderBy,
-        skip,
+        orderBy: {
+          [sort_by]: sort_order
+        },
+        skip: offset,
         take: limit
       }),
       prisma.listing.count({ where })
     ]);
 
-    // Calculate average ratings for each listing
-    const listingsWithRatings = await Promise.all(
-      listings.map(async (listing) => {
-        const avgRating = await prisma.review.aggregate({
-          where: { listing_id: listing.id },
-          _avg: { rating: true }
-        });
-
-        return {
-          ...listing,
-          average_rating: avgRating._avg.rating || 0,
-          primary_image: listing.images[0]?.url || null
-        };
-      })
-    );
-
     return {
-      listings: listingsWithRatings,
+      data: listings,
       pagination: {
-        page,
-        limit,
+        page: parseInt(page),
+        limit: parseInt(limit),
         total,
         pages: Math.ceil(total / limit),
-        has_next: page < Math.ceil(total / limit),
-        has_prev: page > 1
-      },
-      filters: filters
+        has_more: offset + listings.length < total
+      }
     };
-
   } catch (error) {
     logger.error('Get listings failed:', error);
     throw error;
@@ -446,165 +668,153 @@ const getListings = async (filters = {}, pagination = {}, user = null) => {
  * Update listing
  * @param {string} listingId - Listing ID
  * @param {Object} updateData - Update data
- * @param {Object} user - Current user
- * @param {Array} files - New uploaded files
+ * @param {string} userId - User ID
  * @returns {Object} Updated listing
  */
-const updateListing = async (listingId, updateData, user, files = []) => {
+const updateListing = async (listingId, updateData, userId) => {
   try {
     // Get existing listing
-    const existingListing = await prisma.listing.findUnique({
+    const listing = await prisma.listing.findUnique({
+      where: { id: listingId }
+    });
+
+    if (!listing) {
+      throw new NotFoundError('Listing not found');
+    }
+
+    // Check ownership
+    if (listing.vendor_id !== userId) {
+      throw new UnauthorizedError('You can only update your own listings');
+    }
+
+    // Filter allowed update fields
+    const allowedFields = [
+      'title',
+      'description',
+      'price',
+      'condition',
+      'quantity',
+      'tags',
+      'weight',
+      'dimensions',
+      'location',
+      'is_negotiable'
+    ];
+
+    const filteredData = {};
+    Object.keys(updateData).forEach(key => {
+      if (allowedFields.includes(key) && updateData[key] !== undefined) {
+        filteredData[key] = updateData[key];
+      }
+    });
+
+    if (Object.keys(filteredData).length === 0) {
+      throw new ListingError('No valid fields to update');
+    }
+
+    // Update listing
+    const updatedListing = await prisma.listing.update({
       where: { id: listingId },
+      data: {
+        ...filteredData,
+        updated_at: new Date()
+      },
       include: {
+        category: true,
+        vendor: {
+          select: {
+            username: true,
+            business_name: true,
+            vendor_verified: true
+          }
+        },
         images: true,
         videos: true,
         models_3d: true
       }
     });
 
-    if (!existingListing) {
-      throw new NotFoundError('Listing not found');
-    }
-
-    // Check permissions
-    if (existingListing.vendor_id !== user.id && !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-      throw new AuthorizationError('You can only edit your own listings');
-    }
-
-    // Filter allowed update fields
-    const allowedFields = [
-      'title', 'description', 'price', 'condition', 'category_id',
-      'quantity', 'sku', 'tags', 'weight', 'dimensions', 'location',
-      'is_negotiable', 'is_featured'
-    ];
-
-    const filteredData = {};
-    for (const field of allowedFields) {
-      if (updateData[field] !== undefined) {
-        filteredData[field] = updateData[field];
-      }
-    }
-
-    // Validate price if provided
-    if (filteredData.price) {
-      const priceValue = parseFloat(filteredData.price);
-      if (priceValue < BUSINESS_RULES.MIN_LISTING_PRICE || priceValue > BUSINESS_RULES.MAX_LISTING_PRICE) {
-        throw new ValidationError(
-          `Price must be between $${BUSINESS_RULES.MIN_LISTING_PRICE} and $${BUSINESS_RULES.MAX_LISTING_PRICE}`
-        );
-      }
-      filteredData.price = priceValue;
-    }
-
-    // Validate category if provided
-    if (filteredData.category_id) {
-      const category = await prisma.category.findUnique({
-        where: { id: filteredData.category_id }
-      });
-      if (!category) {
-        throw new NotFoundError('Category not found');
-      }
-    }
-
-    // Handle featured listing (admin only)
-    if (filteredData.is_featured !== undefined && !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-      delete filteredData.is_featured;
-    }
-
-    // Limit tags
-    if (filteredData.tags) {
-      filteredData.tags = filteredData.tags.slice(0, BUSINESS_RULES.MAX_TAGS_PER_LISTING);
-    }
-
-    // Process new uploaded files
-    let organizedFiles = { images: [], videos: [], models: [] };
-    if (files && files.length > 0) {
-      organizedFiles = await organizeUploadedFiles(files, user.id, listingId);
-    }
-
-    // Update listing in transaction
-    const updatedListing = await prisma.$transaction(async (tx) => {
-      // Update listing data
-      const updated = await tx.listing.update({
-        where: { id: listingId },
-        data: {
-          ...filteredData,
-          updated_at: new Date(),
-          // Reset to pending approval if content changed significantly
-          status: (filteredData.title || filteredData.description) && user.role === USER_ROLES.VENDOR
-            ? LISTING_STATUS.PENDING_APPROVAL
-            : existingListing.status
-        }
-      });
-
-      // Add new images
-      if (organizedFiles.images.length > 0) {
-        await tx.listingImage.createMany({
-          data: organizedFiles.images.map((image, index) => ({
-            listing_id: listingId,
-            url: image.processedUrl || image.url,
-            alt_text: `${filteredData.title || existingListing.title} - Image ${existingListing.images.length + index + 1}`,
-            is_primary: existingListing.images.length === 0 && index === 0,
-            order_pos: existingListing.images.length + index,
-            file_size: image.size
-          }))
-        });
-      }
-
-      // Add new videos
-      if (organizedFiles.videos.length > 0) {
-        await tx.listingVideo.createMany({
-          data: organizedFiles.videos.map((video) => ({
-            listing_id: listingId,
-            url: video.url,
-            file_size: video.size
-          }))
-        });
-      }
-
-      // Add new 3D models
-      if (organizedFiles.models.length > 0) {
-        await tx.listing3DModel.createMany({
-          data: organizedFiles.models.map((model) => ({
-            listing_id: listingId,
-            url: model.url,
-            file_type: model.mimeType,
-            file_size: model.size
-          }))
-        });
-      }
-
-      return updated;
-    });
-
-    // Regenerate embeddings if content changed
+    // Regenerate embeddings if text content changed
     if (filteredData.title || filteredData.description || filteredData.tags) {
-      try {
-        const primaryImage = existingListing.images?.[0];
-        const imagesForAI = primaryImage ? [{ url: primaryImage.url, is_primary: true }] : [];
-        generateListingEmbeddingsAI(listingId, {
-          title: filteredData.title || existingListing.title,
-          description: filteredData.description || existingListing.description,
-          tags: filteredData.tags || existingListing.tags,
-          images: imagesForAI
-        }).catch(error => {
-          logger.error('Failed to regenerate AI embeddings:', error);
-        });
-      } catch (e) {
-        logger.warn('Skipped AI embedding regeneration due to preparation error', { error: e.message });
-      }
+      await generateListingEmbeddings(listingId, {
+        title: updatedListing.title,
+        description: updatedListing.description,
+        tags: updatedListing.tags,
+        category: updatedListing.category.name
+      });
     }
 
     logger.info('Listing updated successfully', {
       listingId,
-      vendorId: user.id,
+      vendorId: userId,
       updatedFields: Object.keys(filteredData)
     });
 
-    return await getListingById(listingId, user);
-
+    return updatedListing;
   } catch (error) {
-    logger.error('Listing update failed:', error);
+    logger.error('Update listing failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update listing status
+ * @param {string} listingId - Listing ID
+ * @param {string} status - New status
+ * @param {string} userId - User ID
+ * @returns {Object} Updated listing
+ */
+const updateListingStatus = async (listingId, status, userId, userRole) => {
+  try {
+    const listing = await prisma.listing.findUnique({
+      where: { id: listingId }
+    });
+
+    if (!listing) {
+      throw new NotFoundError('Listing not found');
+    }
+
+    // Check permissions
+    const isOwner = listing.vendor_id === userId;
+    const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(userRole);
+
+    if (!isOwner && !isAdmin) {
+      throw new UnauthorizedError('You cannot update this listing status');
+    }
+
+    // Validate status transitions
+    const allowedTransitions = {
+      [LISTING_STATUS.DRAFT]: [LISTING_STATUS.PENDING_APPROVAL, LISTING_STATUS.REMOVED],
+      [LISTING_STATUS.PENDING_APPROVAL]: [LISTING_STATUS.ACTIVE, LISTING_STATUS.REJECTED, LISTING_STATUS.REMOVED],
+      [LISTING_STATUS.ACTIVE]: [LISTING_STATUS.SOLD, LISTING_STATUS.REMOVED],
+      [LISTING_STATUS.SOLD]: [LISTING_STATUS.ACTIVE],
+      [LISTING_STATUS.REJECTED]: [LISTING_STATUS.DRAFT, LISTING_STATUS.REMOVED],
+      [LISTING_STATUS.REMOVED]: [LISTING_STATUS.DRAFT]
+    };
+
+    if (!allowedTransitions[listing.status]?.includes(status)) {
+      throw new ListingError(`Cannot change status from ${listing.status} to ${status}`);
+    }
+
+    // Update status
+    const updatedListing = await prisma.listing.update({
+      where: { id: listingId },
+      data: {
+        status,
+        updated_at: new Date()
+      }
+    });
+
+    logger.info('Listing status updated', {
+      listingId,
+      oldStatus: listing.status,
+      newStatus: status,
+      updatedBy: userId
+    });
+
+    return updatedListing;
+  } catch (error) {
+    logger.error('Update listing status failed:', error);
     throw error;
   }
 };
@@ -614,271 +824,94 @@ const updateListing = async (listingId, updateData, user, files = []) => {
 // ================================
 
 /**
- * Delete listing
- * @param {string} listingId - Listing ID
- * @param {Object} user - Current user
- * @returns {boolean} Success status
- */
-const deleteListing = async (listingId, user) => {
-  try {
-    // Get existing listing with media
-    const existingListing = await prisma.listing.findUnique({
-      where: { id: listingId },
-      include: {
-        images: true,
-        videos: true,
-        models_3d: true,
-        chats: true,
-        transactions: {
-          where: {
-            status: {
-              in: ['INITIATED', 'ESCROW_PENDING', 'ESCROW_ACTIVE']
-            }
-          }
-        }
-      }
-    });
-
-    if (!existingListing) {
-      throw new NotFoundError('Listing not found');
-    }
-
-    // Check permissions
-    if (existingListing.vendor_id !== user.id && !['ADMIN', 'SUPER_ADMIN'].includes(user.role)) {
-      throw new AuthorizationError('You can only delete your own listings');
-    }
-
-    // Check for active transactions
-    if (existingListing.transactions.length > 0) {
-      throw new BusinessLogicError(
-        'Cannot delete listing with active transactions',
-        ERROR_CODES.BUSINESS_TRANSACTION_FAILED
-      );
-    }
-
-    // Delete in transaction
-    await prisma.$transaction(async (tx) => {
-      // Delete media records (files will be cleaned up separately)
-      await tx.listingImage.deleteMany({ where: { listing_id: listingId } });
-      await tx.listingVideo.deleteMany({ where: { listing_id: listingId } });
-      await tx.listing3DModel.deleteMany({ where: { listing_id: listingId } });
-      await tx.listingEmbedding.deleteMany({ where: { listing_id: listingId } });
-
-      // Archive related chats instead of deleting
-      await tx.chat.updateMany({
-        where: { listing_id: listingId },
-        data: { status: 'ARCHIVED' }
-      });
-
-      // Delete user interactions
-      await tx.userInteraction.deleteMany({ where: { listing_id: listingId } });
-
-      // Finally delete the listing
-      await tx.listing.delete({ where: { id: listingId } });
-    });
-
-    // Clean up media files asynchronously
-    const allMediaFiles = [
-      ...existingListing.images.map(img => img.url),
-      ...existingListing.videos.map(vid => vid.url),
-      ...existingListing.models_3d.map(model => model.url)
-    ];
-
-    allMediaFiles.forEach(filePath => {
-      deleteFile(filePath.replace('/uploads/', 'uploads/')).catch(error => {
-        logger.error('Failed to delete media file:', error);
-      });
-    });
-
-    logger.info('Listing deleted successfully', {
-      listingId,
-      vendorId: user.id,
-      mediaFilesCount: allMediaFiles.length
-    });
-
-    return true;
-
-  } catch (error) {
-    logger.error('Listing deletion failed:', error);
-    throw error;
-  }
-};
-
-// ================================
-// UTILITY FUNCTIONS
-// ================================
-
-/**
- * Check if user can create more listings based on subscription
- * @param {string} userId - User ID
- */
-const checkListingLimits = async (userId) => {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    include: {
-      subscription: true,
-      _count: {
-        select: {
-          listings: {
-            where: {
-              status: {
-                in: [LISTING_STATUS.ACTIVE, LISTING_STATUS.PENDING_APPROVAL, LISTING_STATUS.DRAFT]
-              }
-            }
-          }
-        }
-      }
-    }
-  });
-
-  const plan = user.subscription?.plan || 'FREE';
-  const features = SUBSCRIPTION_FEATURES[plan];
-  const currentListings = user._count.listings;
-
-  if (features.max_listings !== -1 && currentListings >= features.max_listings) {
-    throw new BusinessLogicError(
-      `Listing limit reached. Your ${plan} plan allows ${features.max_listings} active listings.`,
-      ERROR_CODES.BUSINESS_LISTING_LIMIT_EXCEEDED
-    );
-  }
-};
-
-/**
- * Increment view count and track user interaction
+ * Delete listing (soft delete)
  * @param {string} listingId - Listing ID
  * @param {string} userId - User ID
+ * @returns {Object} Deletion result
  */
-const incrementViewCount = async (listingId, userId) => {
+const deleteListing = async (listingId, userId, userRole) => {
   try {
-    await prisma.$transaction([
-      // Increment view count
-      prisma.listing.update({
-        where: { id: listingId },
-        data: { views_count: { increment: 1 } }
-      }),
-      
-      // Track user interaction
-      prisma.userInteraction.create({
-        data: {
-          user_id: userId,
-          listing_id: listingId,
-          interaction_type: 'VIEW'
-        }
-      })
-    ]);
-  } catch (error) {
-    // Don't throw error for view counting failures
-    logger.error('Failed to increment view count:', error);
-  }
-};
-
-/**
- * Generate AI embeddings for listing (async)
- * @param {string} listingId - Listing ID
- * @param {Object} content - Text content for embedding
- */
-const generateListingEmbeddings = async (listingId, content) => {
-  try {
-    // This will be implemented when AI search is built
-    // For now, just create a placeholder
-    const textContent = `${content.title} ${content.description} ${content.tags?.join(' ') || ''}`;
-    
-    await prisma.listingEmbedding.upsert({
-      where: { listing_id: listingId },
-      create: {
-        listing_id: listingId,
-        text_embedding: null, // Will be populated by AI service
-        embedding_model: 'placeholder',
-        created_at: new Date(),
-        updated_at: new Date()
-      },
-      update: {
-        text_embedding: null, // Will be populated by AI service
-        updated_at: new Date()
-      }
-    });
-
-    logger.debug('Embedding placeholder created for listing', { listingId });
-  } catch (error) {
-    logger.error('Failed to create embedding placeholder:', error);
-  }
-};
-
-/**
- * Update listing status (admin function)
- * @param {string} listingId - Listing ID
- * @param {string} status - New status
- * @param {Object} user - Admin user
- * @param {string} reason - Reason for status change
- * @returns {Object} Updated listing
- */
-const updateListingStatus = async (listingId, status, user, reason = null) => {
-  try {
-    // Check admin permissions
-    if (!['ADMIN', 'SUPER_ADMIN', 'MODERATOR'].includes(user.role)) {
-      throw new AuthorizationError('Admin access required');
-    }
-
     const listing = await prisma.listing.findUnique({
-      where: { id: listingId },
-      include: { vendor: true }
+      where: { id: listingId }
     });
 
     if (!listing) {
       throw new NotFoundError('Listing not found');
     }
 
-    // Update listing status
-    const updatedListing = await prisma.listing.update({
+    // Check permissions
+    const isOwner = listing.vendor_id === userId;
+    const isAdmin = [USER_ROLES.ADMIN, USER_ROLES.SUPER_ADMIN].includes(userRole);
+
+    if (!isOwner && !isAdmin) {
+      throw new UnauthorizedError('You cannot delete this listing');
+    }
+
+    // Soft delete by updating status
+    await prisma.listing.update({
       where: { id: listingId },
-      data: { 
-        status,
+      data: {
+        status: LISTING_STATUS.REMOVED,
         updated_at: new Date()
       }
     });
 
-    // Create admin action record
-    await prisma.adminAction.create({
-      data: {
-        admin_id: user.id,
-        action_type: `listing_status_${status.toLowerCase()}`,
-        target_type: 'listing',
-        target_id: listingId,
-        reason,
-        metadata: JSON.stringify({
-          old_status: listing.status,
-          new_status: status,
-          vendor_id: listing.vendor_id
-        })
-      }
-    });
-
-    // TODO: Send notification to vendor
-    
-    logger.info('Listing status updated by admin', {
+    logger.info('Listing deleted (soft)', {
       listingId,
-      adminId: user.id,
-      oldStatus: listing.status,
-      newStatus: status,
-      reason
+      deletedBy: userId
     });
 
-    return updatedListing;
-
+    return { success: true };
   } catch (error) {
-    logger.error('Listing status update failed:', error);
+    logger.error('Delete listing failed:', error);
     throw error;
   }
 };
 
+// ================================
+// PLACEHOLDER FUNCTIONS
+// ================================
+
+/**
+ * Generate text embedding (placeholder)
+ * @param {string} text - Text to embed
+ * @returns {Array|null} Embedding vector
+ */
+const generateTextEmbedding = async (text) => {
+  try {
+    // TODO: Implement with OpenAI or HuggingFace API
+    // For now, return null to skip embedding generation
+    return null;
+  } catch (error) {
+    logger.error('Generate text embedding failed:', error);
+    return null;
+  }
+};
+
+// ================================
+// EXPORTS
+// ================================
+
 module.exports = {
+  // Core CRUD operations
   createListing,
   getListingById,
   getListings,
   updateListing,
-  deleteListing,
   updateListingStatus,
-  checkListingLimits,
-  incrementViewCount,
-  generateListingEmbeddings
+  deleteListing,
+
+  // File processing
+  processListingFiles,
+  processAndSaveImage,
+  processAndSaveVideo,
+  processAndSave3DModel,
+
+  // Search and embeddings
+  generateListingEmbeddings,
+
+  // Error classes
+  ListingError,
+  NotFoundError,
+  UnauthorizedError
 };
