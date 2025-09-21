@@ -896,10 +896,8 @@ class SocketChatService {
 
 /**
  * Emit event to specific user across all their sockets
+ * Note: This function is imported from socketUtils, not redefined here
  */
-const emitToUser = (io, userId, event, data) => {
-  io.to(`user:${userId}`).emit(event, data);
-};
 
 /**
  * Emit event to specific chat room

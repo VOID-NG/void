@@ -1,0 +1,235 @@
+{
+  "timestamp": "2025-09-21T18:12:07.136Z",
+  "testSuite": "Search Performance Tests",
+  "configuration": {
+    "BASE_URL": "http://localhost:5000",
+    "SCENARIOS": {
+      "basic_text_search": {
+        "duration": 60000,
+        "concurrent_users": 50,
+        "requests_per_second": 100,
+        "endpoints": [
+          "/api/v1/search"
+        ]
+      },
+      "mixed_search_load": {
+        "duration": 120000,
+        "concurrent_users": 100,
+        "requests_per_second": 200,
+        "endpoints": [
+          "/api/v1/search",
+          "/api/v1/search/autocomplete",
+          "/api/v1/search/trending"
+        ]
+      },
+      "ai_search_stress": {
+        "duration": 300000,
+        "concurrent_users": 20,
+        "requests_per_second": 30,
+        "endpoints": [
+          "/api/v1/search/advanced"
+        ]
+      },
+      "image_search_load": {
+        "duration": 180000,
+        "concurrent_users": 10,
+        "requests_per_second": 15,
+        "endpoints": [
+          "/api/v1/search/image-url"
+        ]
+      }
+    },
+    "THRESHOLDS": {
+      "response_time_p95": 2000,
+      "response_time_p99": 5000,
+      "error_rate": 0.01,
+      "throughput_min": 50,
+      "memory_usage_max": 536870912,
+      "cpu_usage_max": 80
+    }
+  },
+  "results": [
+    {
+      "scenario": "basic_text_search",
+      "success": false,
+      "metrics": {
+        "requests": [],
+        "errors": [],
+        "responseTimeStats": {
+          "min": null,
+          "max": 0,
+          "sum": 0,
+          "count": 0,
+          "percentiles": {
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "average": null
+        },
+        "throughput": {
+          "requests_per_second": 0,
+          "total_requests": 0,
+          "duration": 1.5946922
+        },
+        "systemMetrics": {
+          "memory": [
+            {
+              "timestamp": 1758478302340,
+              "rss": 951132160,
+              "heapUsed": 9770888,
+              "heapTotal": 18866176
+            }
+          ],
+          "cpu": [
+            {
+              "timestamp": 1758478302340,
+              "user": 12671000,
+              "system": 2312000
+            }
+          ]
+        },
+        "errorRate": null
+      },
+      "thresholdViolations": [
+        "Throughput (0.00 RPS) below minimum (50 RPS)"
+      ],
+      "performance": "FAIL"
+    },
+    {
+      "scenario": "mixed_search_load",
+      "success": false,
+      "metrics": {
+        "requests": [],
+        "errors": [],
+        "responseTimeStats": {
+          "min": null,
+          "max": 0,
+          "sum": 0,
+          "count": 0,
+          "percentiles": {
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "average": null
+        },
+        "throughput": {
+          "requests_per_second": 0,
+          "total_requests": 0,
+          "duration": 3.130401099999999
+        },
+        "systemMetrics": {
+          "memory": [
+            {
+              "timestamp": 1758478309970,
+              "rss": 1805029376,
+              "heapUsed": 11813896,
+              "heapTotal": 15720448
+            },
+            {
+              "timestamp": 1758478310970,
+              "rss": 233213952,
+              "heapUsed": 9480080,
+              "heapTotal": 13885440
+            }
+          ],
+          "cpu": [
+            {
+              "timestamp": 1758478309970,
+              "user": 40406000,
+              "system": 7812000
+            },
+            {
+              "timestamp": 1758478310970,
+              "user": 47875000,
+              "system": 9140000
+            }
+          ]
+        },
+        "errorRate": null
+      },
+      "thresholdViolations": [
+        "Throughput (0.00 RPS) below minimum (50 RPS)"
+      ],
+      "performance": "FAIL"
+    },
+    {
+      "scenario": "ai_search_stress",
+      "success": false,
+      "metrics": {
+        "requests": [],
+        "errors": [],
+        "responseTimeStats": {
+          "min": null,
+          "max": 0,
+          "sum": 0,
+          "count": 0,
+          "percentiles": {
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "average": null
+        },
+        "throughput": {
+          "requests_per_second": 0,
+          "total_requests": 0,
+          "duration": 0.7114859000000014
+        },
+        "systemMetrics": {
+          "memory": [],
+          "cpu": []
+        },
+        "errorRate": null
+      },
+      "thresholdViolations": [
+        "Throughput (0.00 RPS) below minimum (50 RPS)"
+      ],
+      "performance": "FAIL"
+    },
+    {
+      "scenario": "image_search_load",
+      "success": false,
+      "metrics": {
+        "requests": [],
+        "errors": [],
+        "responseTimeStats": {
+          "min": null,
+          "max": 0,
+          "sum": 0,
+          "count": 0,
+          "percentiles": {
+            "p50": 0,
+            "p90": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "average": null
+        },
+        "throughput": {
+          "requests_per_second": 0,
+          "total_requests": 0,
+          "duration": 0.3522404999999999
+        },
+        "systemMetrics": {
+          "memory": [],
+          "cpu": []
+        },
+        "errorRate": null
+      },
+      "thresholdViolations": [
+        "Throughput (0.00 RPS) below minimum (50 RPS)"
+      ],
+      "performance": "FAIL"
+    }
+  ],
+  "summary": {
+    "totalScenarios": 4,
+    "passedScenarios": 0,
+    "failedScenarios": 4
+  }
+}

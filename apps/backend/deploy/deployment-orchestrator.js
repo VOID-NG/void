@@ -658,7 +658,7 @@ class DeploymentOrchestrator {
     logger.info('📈 Establishing performance baselines');
     
     try {
-      const { PerformanceTester } = require('../performance-tests/load-test-suite');
+      const { PerformanceTester } = require('../tests/performance/load-test-suite');
       const tester = new PerformanceTester();
       
       // Run baseline performance tests

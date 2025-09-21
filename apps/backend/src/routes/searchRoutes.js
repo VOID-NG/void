@@ -1,590 +1,540 @@
 // apps/backend/src/routes/searchRoutes.js
-// Complete search routes with text search, image search, autocomplete, and analytics
+// Comprehensive Search API Routes
 
 const express = require('express');
-const multer = require('multer');
-const { verifyToken } = require('../middleware/authMiddleware');
-const { requireRole } = require('../middleware/roleMiddleware');
-const { validate } = require('../middleware/validateMiddleware');
-const searchController = require('../controllers/searchController');
-
 const router = express.Router();
 
-// Configure multer for image uploads (image search)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max
-    files: 1
-  },
-  fileFilter: (req, file, cb) => {
-    // Allow only image files
-    if (file.mimetype.startsWith('image/')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image files are allowed for image search'), false);
-    }
-  }
-});
+// Import middleware
+const { authenticate, optionalAuthenticate } = require('../middleware/authMiddleware');
+const { requireRole } = require('../middleware/roleMiddleware');
+const { validate } = require('../middleware/validateMiddleware');
+const { 
+  uploadImages, 
+  handleUploadError,
+  validateFilesSecurity 
+} = require('../middleware/uploadMiddleware');
+
+// Import controller
+const {
+  searchListings,
+  advancedSearch,
+  searchByImage,
+  searchByImageUrl,
+  getAutocomplete,
+  getTrendingSearches,
+  analyzeSearchQuery,
+  getSearchMetrics
+} = require('../controllers/searchController');
+
+// Import validators
+const { searchValidators } = require('../validators/searchValidator');
 
 // ================================
-// TEXT SEARCH ROUTES
+// PUBLIC SEARCH ENDPOINTS
 // ================================
 
 /**
  * @route   GET /api/v1/search
- * @desc    Main search endpoint with filters and pagination
- * @access  Public
- * @query   {
- *   q: string (required),
- *   category?: string,
- *   min_price?: number,
- *   max_price?: number,
- *   condition?: string,
- *   location?: string,
- *   vendor_id?: string,
- *   sort_by?: string,
- *   sort_order?: string,
- *   page?: number,
- *   limit?: number,
- *   include_inactive?: boolean
- * }
+ * @desc    Intelligent text search with cost optimization
+ * @access  Public (with optional authentication for personalization)
+ * @example GET /search?q=iphone&category=electronics&min_price=500&max_price=1000&page=1&limit=20
  */
-router.get('/', searchController.searchListings);
+router.get('/',
+  optionalAuthenticate, // Optional auth for personalization
+  validate(searchValidators.textSearch, 'query'),
+  searchListings
+);
+
+/**
+ * @route   POST /api/v1/search/advanced
+ * @desc    Advanced search with explicit AI enhancement options
+ * @access  Public (with optional authentication)
+ * @body    { query, filters, pagination, requireAI, analysisDepth }
+ */
+router.post('/advanced',
+  optionalAuthenticate,
+  validate(searchValidators.advancedSearch),
+  advancedSearch
+);
 
 /**
  * @route   GET /api/v1/search/autocomplete
- * @desc    Get autocomplete suggestions for search query
+ * @desc    Smart autocomplete suggestions with caching
  * @access  Public
- * @query   { q: string, limit?: number }
+ * @example GET /search/autocomplete?q=iph&limit=10
  */
-router.get('/autocomplete', searchController.autocompleteSearch);
+router.get('/autocomplete',
+  optionalAuthenticate,
+  validate(searchValidators.autocomplete, 'query'),
+  getAutocomplete
+);
 
 /**
- * @route   GET /api/v1/search/suggestions
- * @desc    Get search suggestions and popular queries
+ * @route   GET /api/v1/search/trending
+ * @desc    Get trending searches and popular queries
  * @access  Public
- * @query   { category?: string, location?: string, limit?: number }
+ * @example GET /search/trending?limit=10&timeframe=24h
  */
-router.get('/suggestions', searchController.getSearchSuggestions);
-
-/**
- * @route   GET /api/v1/search/popular-terms
- * @desc    Get popular search terms
- * @access  Public
- * @query   { period?: string, category?: string, limit?: number }
- */
-router.get('/popular-terms', searchController.getPopularSearchTerms);
+router.get('/trending',
+  validate(searchValidators.trending, 'query'),
+  getTrendingSearches
+);
 
 // ================================
-// IMAGE SEARCH ROUTES
+// IMAGE SEARCH ENDPOINTS
 // ================================
 
 /**
  * @route   POST /api/v1/search/image
- * @desc    Search by uploading an image
- * @access  Public
- * @body    {
- *   image: File (required),
- *   category?: string,
- *   min_price?: number,
- *   max_price?: number,
- *   similarity_threshold?: number,
- *   limit?: number
- * }
+ * @desc    Search by uploaded image using Gemini Vision
+ * @access  Public (with optional authentication)
+ * @upload  Single image file (max 10MB)
  */
-router.post('/image', upload.single('image'), searchController.searchByImage);
+router.post('/image',
+  optionalAuthenticate,
+  uploadImages.single('image'),
+  handleUploadError,
+  validateFilesSecurity,
+  validate(searchValidators.imageSearch),
+  searchByImage
+);
 
 /**
  * @route   POST /api/v1/search/image-url
- * @desc    Search by image URL
- * @access  Public
- * @body    {
- *   image_url: string (required),
- *   category?: string,
- *   min_price?: number,
- *   max_price?: number,
- *   similarity_threshold?: number,
- *   limit?: number
- * }
+ * @desc    Search by image URL using Gemini Vision
+ * @access  Public (with optional authentication)
+ * @body    { image_url, category?, min_price?, max_price?, etc. }
  */
-router.post('/image-url', searchController.searchByImageUrl);
+router.post('/image-url',
+  optionalAuthenticate,
+  validate(searchValidators.imageUrlSearch),
+  searchByImageUrl
+);
 
 // ================================
-// ADVANCED SEARCH ROUTES
+// ANALYTICS & INSIGHTS ENDPOINTS
 // ================================
 
 /**
- * @route   POST /api/v1/search/advanced
- * @desc    Advanced search with multiple criteria
- * @access  Public
- * @body    {
- *   query?: string,
- *   categories?: string[],
- *   price_range?: { min: number, max: number },
- *   conditions?: string[],
- *   locations?: string[],
- *   vendors?: string[],
- *   date_range?: { start: string, end: string },
- *   has_images?: boolean,
- *   has_videos?: boolean,
- *   has_3d_models?: boolean,
- *   rating_min?: number,
- *   sort_by?: string,
- *   sort_order?: string,
- *   page?: number,
- *   limit?: number
- * }
+ * @route   POST /api/v1/search/analyze
+ * @desc    Analyze search query strategy (for debugging/optimization)
+ * @access  Private (Admin/Developer only)
+ * @body    { query, context? }
  */
-router.post('/advanced', searchController.advancedSearch);
+router.post('/analyze',
+  authenticate,
+  requireRole(['ADMIN', 'SUPER_ADMIN']),
+  validate(searchValidators.analyzeQuery),
+  analyzeSearchQuery
+);
+
+/**
+ * @route   GET /api/v1/search/metrics
+ * @desc    Get comprehensive search performance metrics
+ * @access  Private (Admin only)
+ * @example GET /search/metrics?timeframe=24h
+ */
+router.get('/metrics',
+  authenticate,
+  requireRole(['ADMIN', 'SUPER_ADMIN']),
+  validate(searchValidators.getMetrics, 'query'),
+  getSearchMetrics
+);
 
 // ================================
-// SAVED SEARCHES (Authentication Required)
+// SEARCH RESULT INTERACTION ENDPOINTS
 // ================================
 
 /**
- * @route   POST /api/v1/search/saved
- * @desc    Save a search for later
+ * @route   POST /api/v1/search/click
+ * @desc    Track search result clicks for analytics and personalization
+ * @access  Private (Authenticated users only)
+ * @body    { search_id, listing_id, position }
+ */
+router.post('/click',
+  authenticate,
+  validate(searchValidators.trackClick),
+  async (req, res) => {
+    try {
+      const { search_id, listing_id, position } = req.body;
+      const { dbRouter } = require('../config/db');
+      const logger = require('../utils/logger');
+
+      // Update search analytics with click data
+      await dbRouter.searchAnalytics.updateMany({
+        where: { session_id: search_id },
+        data: { clicked_result_id: listing_id }
+      });
+
+      // Track user interaction
+      await dbRouter.userInteraction.create({
+        data: {
+          user_id: req.user.id,
+          listing_id: listing_id,
+          interaction_type: 'SEARCH_CLICK',
+          metadata: JSON.stringify({ 
+            search_id, 
+            position,
+            timestamp: new Date().toISOString()
+          })
+        }
+      });
+
+      // Update listing click count
+      await dbRouter.listing.update({
+        where: { id: listing_id },
+        data: { click_count: { increment: 1 } }
+      });
+
+      logger.info('Search click tracked', {
+        userId: req.user.id,
+        searchId: search_id,
+        listingId: listing_id,
+        position
+      });
+
+      res.json({
+        success: true,
+        message: 'Click tracked successfully'
+      });
+
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to track search click', { 
+        error: error.message,
+        userId: req.user.id,
+        body: req.body
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to track click',
+        message: error.message
+      });
+    }
+  }
+);
+
+/**
+ * @route   POST /api/v1/search/save
+ * @desc    Save search query for later (authenticated users)
  * @access  Private
- * @body    {
- *   name: string (required),
- *   query: string (required),
- *   filters?: object,
- *   notify_on_new_results?: boolean
- * }
+ * @body    { query, filters?, name? }
  */
-router.post('/saved', verifyToken, searchController.saveSearch);
+router.post('/save',
+  authenticate,
+  validate(searchValidators.saveSearch),
+  async (req, res) => {
+    try {
+      const { query, filters = {}, name } = req.body;
+      const { dbRouter } = require('../config/db');
+
+      const savedSearch = await dbRouter.savedSearch.create({
+        data: {
+          user_id: req.user.id,
+          query_text: query,
+          filters: filters,
+          name: name || `Search: ${query}`,
+          is_active: true
+        }
+      });
+
+      res.json({
+        success: true,
+        data: savedSearch,
+        message: 'Search saved successfully'
+      });
+
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to save search', { 
+        error: error.message,
+        userId: req.user.id
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to save search',
+        message: error.message
+      });
+    }
+  }
+);
 
 /**
  * @route   GET /api/v1/search/saved
  * @desc    Get user's saved searches
  * @access  Private
- * @query   { page?: number, limit?: number }
  */
-router.get('/saved', verifyToken, searchController.getSavedSearches);
+router.get('/saved',
+  authenticate,
+  async (req, res) => {
+    try {
+      const { page = 1, limit = 20 } = req.query;
+      const { dbRouter } = require('../config/db');
 
-/**
- * @route   GET /api/v1/search/saved/:searchId
- * @desc    Execute a saved search
- * @access  Private
- * @query   { page?: number, limit?: number }
- */
-router.get('/saved/:searchId', verifyToken, searchController.executeSavedSearch);
+      const offset = (parseInt(page) - 1) * parseInt(limit);
 
-/**
- * @route   DELETE /api/v1/search/saved/:searchId
- * @desc    Delete a saved search
- * @access  Private
- */
-router.delete('/saved/:searchId', verifyToken, async (req, res) => {
-  try {
-    const { searchId } = req.params;
-    const searchService = require('../services/searchService-original');
+      const [savedSearches, total] = await Promise.all([
+        dbRouter.savedSearch.findMany({
+          where: { 
+            user_id: req.user.id,
+            is_active: true
+          },
+          orderBy: { created_at: 'desc' },
+          skip: offset,
+          take: parseInt(limit)
+        }),
+        dbRouter.savedSearch.count({
+          where: { 
+            user_id: req.user.id,
+            is_active: true
+          }
+        })
+      ]);
 
-    await searchService.deleteSavedSearch({
-      search_id: searchId,
-      user_id: req.user.id
-    });
+      res.json({
+        success: true,
+        data: savedSearches,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / parseInt(limit))
+        }
+      });
 
-    res.json({
-      success: true,
-      message: 'Saved search deleted successfully'
-    });
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to get saved searches', { 
+        error: error.message,
+        userId: req.user.id
+      });
 
-  } catch (error) {
-    const logger = require('../utils/logger');
-    logger.error('Delete saved search failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete saved search',
-      message: error.message
-    });
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get saved searches',
+        message: error.message
+      });
+    }
   }
-});
-
-/**
- * @route   PATCH /api/v1/search/saved/:searchId
- * @desc    Update a saved search
- * @access  Private
- * @body    {
- *   name?: string,
- *   query?: string,
- *   filters?: object,
- *   notify_on_new_results?: boolean
- * }
- */
-router.patch('/saved/:searchId', verifyToken, async (req, res) => {
-  try {
-    const { searchId } = req.params;
-    const updateData = req.body;
-    const searchService = require('../services/searchService-original');
-
-    const updatedSearch = await searchService.updateSavedSearch({
-      search_id: searchId,
-      user_id: req.user.id,
-      updates: updateData
-    });
-
-    res.json({
-      success: true,
-      data: { saved_search: updatedSearch },
-      message: 'Saved search updated successfully'
-    });
-
-  } catch (error) {
-    const logger = require('../utils/logger');
-    logger.error('Update saved search failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to update saved search',
-      message: error.message
-    });
-  }
-});
+);
 
 // ================================
-// SEARCH FILTERS & FACETS
+// SEARCH RECOMMENDATIONS ENDPOINTS
+// ================================
+
+/**
+ * @route   GET /api/v1/search/recommendations
+ * @desc    Get personalized search recommendations
+ * @access  Private (Authenticated users only)
+ */
+router.get('/recommendations',
+  authenticate,
+  async (req, res) => {
+    try {
+      const { limit = 10, type = 'all' } = req.query;
+      const { getAIRecommendations } = require('../services/searchService-original');
+      
+      const context = {
+        userId: req.user.id,
+        userPreferences: req.user.search_preferences,
+        recentSearches: true,
+        recentInteractions: true
+      };
+
+      const recommendations = await getAIRecommendations(req.user.id, context);
+
+      res.json({
+        success: true,
+        recommendations: recommendations.success ? recommendations.recommendations : [],
+        aiInsights: recommendations.success ? recommendations.insights : null,
+        performance: recommendations.performance || { strategy: 'fallback' }
+      });
+
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to get search recommendations', { 
+        error: error.message,
+        userId: req.user.id
+      });
+
+      res.json({
+        success: false,
+        recommendations: [],
+        error: 'Failed to get recommendations',
+        message: error.message
+      });
+    }
+  }
+);
+
+/**
+ * @route   GET /api/v1/search/similar/:listingId
+ * @desc    Find similar listings to a given listing
+ * @access  Public
+ */
+router.get('/similar/:listingId',
+  optionalAuthenticate,
+  validate(searchValidators.similarListings, 'params'),
+  async (req, res) => {
+    try {
+      const { listingId } = req.params;
+      const { limit = 10 } = req.query;
+      const { dbRouter } = require('../config/db');
+      const { calculateBasicSimilarity } = require('../services/searchService-original');
+
+      // Get the source listing
+      const sourceListing = await dbRouter.listing.findUnique({
+        where: { id: listingId },
+        include: {
+          category: true,
+          images: true
+        }
+      });
+
+      if (!sourceListing) {
+        return res.status(404).json({
+          success: false,
+          error: 'Listing not found',
+          error_code: 'LISTING_NOT_FOUND'
+        });
+      }
+
+      // Find similar listings using traditional similarity
+      const similarListings = await calculateBasicSimilarity(sourceListing, {
+        limit: parseInt(limit),
+        includeImages: true
+      });
+
+      res.json({
+        success: true,
+        data: similarListings.results || [],
+        sourceListing: {
+          id: sourceListing.id,
+          title: sourceListing.title,
+          category: sourceListing.category.name
+        },
+        performance: similarListings.performance || { strategy: 'basic_similarity' }
+      });
+
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to find similar listings', { 
+        error: error.message,
+        listingId: req.params.listingId
+      });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to find similar listings',
+        message: error.message
+      });
+    }
+  }
+);
+
+// ================================
+// SEARCH FILTERS & CATEGORIES
 // ================================
 
 /**
  * @route   GET /api/v1/search/filters
- * @desc    Get available search filters
+ * @desc    Get available search filters and categories
  * @access  Public
- * @query   { category?: string, query?: string }
  */
-router.get('/filters', searchController.getSearchFilters);
-
-/**
- * @route   POST /api/v1/search/facets
- * @desc    Get search facets/aggregations
- * @access  Public
- * @body    { query?: string, filters?: object }
- */
-router.post('/facets', searchController.getSearchFacets);
-
-// ================================
-// SEARCH ANALYTICS (Admin Only)
-// ================================
-
-/**
- * @route   GET /api/v1/search/analytics
- * @desc    Get search analytics (Admin only)
- * @access  Private (Admin)
- * @query   {
- *   start_date?: string,
- *   end_date?: string,
- *   category?: string,
- *   limit?: number
- * }
- */
-router.get('/analytics', 
-  verifyToken, 
-  requireRole(['ADMIN', 'SUPER_ADMIN']), 
-  searchController.getSearchAnalytics
-);
-
-/**
- * @route   GET /api/v1/search/analytics/trends
- * @desc    Get search trends over time (Admin only)
- * @access  Private (Admin)
- * @query   {
- *   period?: string,
- *   groupBy?: string,
- *   category?: string
- * }
- */
-router.get('/analytics/trends', 
-  verifyToken, 
-  requireRole(['ADMIN', 'SUPER_ADMIN']), 
+router.get('/filters',
   async (req, res) => {
     try {
-      const {
-        period = '30d',
-        groupBy = 'day',
-        category
-      } = req.query;
+      const { dbRouter } = require('../config/db');
 
-      const searchService = require('../services/searchService-original');
-      const trends = await searchService.getSearchTrends({
-        period,
-        groupBy,
-        category
-      });
+      const [categories, conditions, priceRanges] = await Promise.all([
+        // Get all categories with listing counts
+        dbRouter.category.findMany({
+          include: {
+            _count: {
+              select: {
+                listings: {
+                  where: { status: 'ACTIVE' }
+                }
+              }
+            }
+          },
+          orderBy: { name: 'asc' }
+        }),
+
+        // Get available conditions
+        dbRouter.listing.groupBy({
+          by: ['condition'],
+          where: { status: 'ACTIVE' },
+          _count: { condition: true }
+        }),
+
+        // Get price ranges
+        dbRouter.listing.aggregate({
+          where: { status: 'ACTIVE' },
+          _min: { price: true },
+          _max: { price: true },
+          _avg: { price: true }
+        })
+      ]);
+
+      // Generate suggested price ranges
+      const maxPrice = parseFloat(priceRanges._max.price || 1000);
+      const suggestedRanges = [
+        { label: 'Under $50', min: 0, max: 50 },
+        { label: '$50 - $100', min: 50, max: 100 },
+        { label: '$100 - $250', min: 100, max: 250 },
+        { label: '$250 - $500', min: 250, max: 500 },
+        { label: '$500 - $1000', min: 500, max: 1000 },
+        { label: 'Over $1000', min: 1000, max: maxPrice }
+      ].filter(range => range.max <= maxPrice || range.min < maxPrice);
 
       res.json({
         success: true,
-        data: trends
-      });
-
-    } catch (error) {
-      const logger = require('../utils/logger');
-      logger.error('Get search trends failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get search trends',
-        message: error.message
-      });
-    }
-  }
-);
-
-/**
- * @route   GET /api/v1/search/analytics/performance
- * @desc    Get search performance metrics (Admin only)
- * @access  Private (Admin)
- * @query   {
- *   start_date?: string,
- *   end_date?: string
- * }
- */
-router.get('/analytics/performance', 
-  verifyToken, 
-  requireRole(['ADMIN', 'SUPER_ADMIN']), 
-  async (req, res) => {
-    try {
-      const {
-        start_date,
-        end_date
-      } = req.query;
-
-      const searchService = require('../services/searchService-original');
-      const performance = await searchService.getSearchPerformance({
-        start_date: start_date ? new Date(start_date) : undefined,
-        end_date: end_date ? new Date(end_date) : undefined
-      });
-
-      res.json({
-        success: true,
-        data: performance
-      });
-
-    } catch (error) {
-      const logger = require('../utils/logger');
-      logger.error('Get search performance failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to get search performance',
-        message: error.message
-      });
-    }
-  }
-);
-
-// ================================
-// SEARCH HEALTH & MONITORING
-// ================================
-
-/**
- * @route   GET /api/v1/search/health
- * @desc    Check search service health
- * @access  Public
- */
-router.get('/health', async (req, res) => {
-  try {
-    const searchService = require('../services/searchService-original');
-    const health = await searchService.healthCheck();
-
-    res.json({
-      success: true,
-      data: health
-    });
-
-  } catch (error) {
-    const logger = require('../utils/logger');
-    logger.error('Search health check failed:', error);
-    res.status(503).json({
-      success: false,
-      error: 'Search service unhealthy',
-      message: error.message
-    });
-  }
-});
-
-/**
- * @route   POST /api/v1/search/index/rebuild
- * @desc    Rebuild search index (Admin only)
- * @access  Private (Super Admin)
- */
-router.post('/index/rebuild', 
-  verifyToken, 
-  requireRole(['SUPER_ADMIN']), 
-  async (req, res) => {
-    try {
-      const { full_rebuild = false } = req.body;
-      const searchService = require('../services/searchService-original');
-
-      // Start async rebuild process
-      const rebuildResult = await searchService.rebuildSearchIndex({
-        full_rebuild,
-        user_id: req.user.id
-      });
-
-      res.json({
-        success: true,
-        data: rebuildResult,
-        message: 'Search index rebuild initiated'
-      });
-
-    } catch (error) {
-      const logger = require('../utils/logger');
-      logger.error('Search index rebuild failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to rebuild search index',
-        message: error.message
-      });
-    }
-  }
-);
-
-// ================================
-// SEARCH VALIDATION MIDDLEWARE
-// ================================
-
-/**
- * Validation middleware for search requests
- */
-const validateSearchRequest = (req, res, next) => {
-  const { q: query } = req.query;
-  
-  if (query && (query.length > 200 || query.length < 1)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Search query must be between 1 and 200 characters'
-    });
-  }
-
-  // Sanitize query to prevent injection attacks
-  if (query) {
-    req.query.q = query.replace(/[<>\"']/g, '').trim();
-  }
-
-  next();
-};
-
-// Apply validation to search endpoints
-router.use(['/'], validateSearchRequest);
-
-// ================================
-// ERROR HANDLING MIDDLEWARE
-// ================================
-
-/**
- * Search-specific error handling
- */
-router.use((error, req, res, next) => {
-  const logger = require('../utils/logger');
-  
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({
-        success: false,
-        error: 'Image file too large',
-        message: 'Maximum file size is 10MB'
-      });
-    }
-    
-    if (error.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({
-        success: false,
-        error: 'Unexpected file field',
-        message: 'Only single image upload is allowed'
-      });
-    }
-  }
-
-  if (error.message === 'Only image files are allowed for image search') {
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid file type',
-      message: 'Only image files (PNG, JPG, GIF, WebP) are allowed for image search'
-    });
-  }
-
-  logger.error('Search route error:', error);
-  res.status(500).json({
-    success: false,
-    error: 'Search service error',
-    message: 'An error occurred while processing your search request'
-  });
-});
-
-// ================================
-// ROUTE DOCUMENTATION
-// ================================
-
-/**
- * @route   GET /api/v1/search/docs
- * @desc    Get search API documentation
- * @access  Public
- */
-router.get('/docs', (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      version: '1.0.0',
-      description: 'Void Marketplace Search API',
-      endpoints: {
-        text_search: {
-          'GET /search': 'Main search with filters and pagination',
-          'GET /search/autocomplete': 'Autocomplete suggestions',
-          'GET /search/suggestions': 'Popular and trending searches',
-          'GET /search/popular-terms': 'Most searched terms'
+        filters: {
+          categories: categories.map(cat => ({
+            id: cat.id,
+            name: cat.name,
+            description: cat.description,
+            listingCount: cat._count.listings,
+            parentId: cat.parent_id
+          })),
+          conditions: conditions.map(cond => ({
+            value: cond.condition,
+            label: cond.condition.replace('_', ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase()),
+            count: cond._count.condition
+          })),
+          priceRanges: {
+            suggested: suggestedRanges,
+            stats: {
+              min: parseFloat(priceRanges._min.price || 0),
+              max: parseFloat(priceRanges._max.price || 0),
+              average: parseFloat(priceRanges._avg.price || 0)
+            }
+          }
         },
-        image_search: {
-          'POST /search/image': 'Search by uploading image file',
-          'POST /search/image-url': 'Search by image URL'
-        },
-        advanced_search: {
-          'POST /search/advanced': 'Multi-criteria advanced search'
-        },
-        saved_searches: {
-          'POST /search/saved': 'Save search for later',
-          'GET /search/saved': 'Get saved searches',
-          'GET /search/saved/:id': 'Execute saved search',
-          'PATCH /search/saved/:id': 'Update saved search',
-          'DELETE /search/saved/:id': 'Delete saved search'
-        },
-        filters_facets: {
-          'GET /search/filters': 'Get available filters',
-          'POST /search/facets': 'Get search aggregations'
-        },
-        analytics: {
-          'GET /search/analytics': 'Search analytics (Admin)',
-          'GET /search/analytics/trends': 'Search trends (Admin)',
-          'GET /search/analytics/performance': 'Performance metrics (Admin)'
-        },
-        maintenance: {
-          'GET /search/health': 'Service health check',
-          'POST /search/index/rebuild': 'Rebuild search index (Super Admin)'
+        meta: {
+          timestamp: new Date().toISOString(),
+          totalActiveListings: await dbRouter.listing.count({ where: { status: 'ACTIVE' } })
         }
-      },
-      features: [
-        'Full-text search with fuzzy matching',
-        'Image-based visual search',
-        'Advanced filtering and faceting',
-        'Real-time autocomplete',
-        'Saved searches with notifications',
-        'Search analytics and trends',
-        'Multi-language support',
-        'Geo-location search',
-        'AI-powered recommendations'
-      ],
-      authentication: {
-        required_for: [
-          'Saved searches',
-          'Analytics endpoints',
-          'Index management'
-        ],
-        optional_for: [
-          'Basic search',
-          'Image search',
-          'Autocomplete',
-          'Filters and facets'
-        ]
-      }
+      });
+
+    } catch (error) {
+      const logger = require('../utils/logger');
+      logger.error('Failed to get search filters', { error: error.message });
+
+      res.status(500).json({
+        success: false,
+        error: 'Failed to get search filters',
+        message: error.message
+      });
     }
-  });
-});
+  }
+);
+
+// ================================
+// EXPORT ROUTER
+// ================================
 
 module.exports = router;

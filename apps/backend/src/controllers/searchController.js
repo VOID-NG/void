@@ -1,634 +1,681 @@
 // apps/backend/src/controllers/searchController.js
-// Complete search controller: text search, image search, autocomplete, filters
+// Advanced Search Controller
 
-const searchService = require('../services/searchService-original');
 const logger = require('../utils/logger');
-const { fuzzySearch } = require('../utils/fuzzySearchUtils');
-const { generateImageEmbedding } = require('../utils/imageEmbeddingUtils');
+const { asyncHandler } = require('../middleware/errorMiddleware');
+const {
+  executeIntelligentSearch,
+  executeTraditionalSearch,
+  executeAIEnhancedSearch,
+  executeImageSearch,
+  getSmartAutocomplete,
+  analyzeSearchStrategy,
+  SEARCH_CONFIG
+} = require('../services/searchOrchestrator');
+const { dbRouter } = require('../config/db');
+const { API_CONFIG } = require('../services/searchService-original');
 
 // ================================
 // TEXT SEARCH ENDPOINTS
 // ================================
 
 /**
- * Main search endpoint with filters and pagination
+ * @desc    Intelligent text search with cost optimization
+ * @route   GET /api/v1/search
+ * @access  Public
  */
-const searchListings = async (req, res) => {
-  try {
-    const {
-      q: query,
-      category,
-      min_price,
-      max_price,
-      condition,
-      location,
-      vendor_id,
-      sort_by = 'relevance',
-      sort_order = 'desc',
-      page = 1,
-      limit = 24,
-      include_inactive = false
-    } = req.query;
+const searchListings = asyncHandler(async (req, res) => {
+  const startTime = Date.now();
+  
+  const {
+    q: query,
+    category,
+    min_price,
+    max_price,
+    condition,
+    location,
+    vendor_id,
+    is_featured,
+    page = 1,
+    limit = 20,
+    sort_by = 'relevance',
+    sort_order = 'desc'
+  } = req.query;
 
-    if (!query || query.trim().length < 2) {
-      return res.status(400).json({
-        success: false,
-        error: 'Search query must be at least 2 characters long'
-      });
-    }
+  // Validate pagination
+  const pageNum = Math.max(1, parseInt(page));
+  const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
 
-    const searchParams = {
-      query: query.trim(),
-      filters: {
-        category,
-        min_price: min_price ? parseFloat(min_price) : undefined,
-        max_price: max_price ? parseFloat(max_price) : undefined,
-        condition,
-        location,
-        vendor_id,
-        include_inactive: include_inactive === 'true'
-      },
-      sorting: {
-        sort_by,
-        sort_order
-      },
-      pagination: {
-        page: parseInt(page),
-        limit: Math.min(parseInt(limit), 100) // Max 100 results per page
-      },
-      user_id: req.user?.id // For personalized results
-    };
+  // Build filters
+  const filters = {};
+  if (category) filters.category_id = category;
+  if (min_price !== undefined) filters.min_price = parseFloat(min_price);
+  if (max_price !== undefined) filters.max_price = parseFloat(max_price);
+  if (condition) filters.condition = condition.toUpperCase();
+  if (location) filters.location = location;
+  if (vendor_id) filters.vendor_id = vendor_id;
+  if (is_featured !== undefined) filters.is_featured = is_featured === 'true';
 
-    const results = await searchService.searchListings(searchParams);
+  // Build pagination
+  const pagination = {
+    page: pageNum,
+    limit: limitNum,
+    sort_by,
+    sort_order
+  };
 
-    // Log search analytics
-    logger.info('Search performed', {
-      query: query.trim(),
-      user_id: req.user?.id,
-      results_count: results.data.length,
-      page,
-      filters: Object.keys(searchParams.filters).filter(key => 
-        searchParams.filters[key] !== undefined
-      )
-    });
+  // Build context
+  const context = {
+    userId: req.user?.id,
+    userPreferences: req.user?.search_preferences,
+    isSubscribedUser: req.user?.subscription?.status === 'ACTIVE',
+    ipAddress: req.ip,
+    userAgent: req.get('User-Agent')
+  };
 
-    res.json({
-      success: true,
-      data: results.data,
-      pagination: results.pagination,
-      facets: results.facets,
-      search_metadata: {
-        query: query.trim(),
-        total_results: results.pagination.total,
-        search_time: results.search_time || '< 1ms',
-        suggestions: results.suggestions || []
-      }
-    });
+  // Execute intelligent search
+  const searchRequest = {
+    query,
+    filters,
+    pagination,
+    context
+  };
 
-  } catch (error) {
-    logger.error('Search listings failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Search failed',
-      message: error.message
+  const results = await executeIntelligentSearch(searchRequest);
+
+  // Track search interaction
+  if (req.user?.id && results.success) {
+    // Background task - don't await
+    trackUserInteraction(req.user.id, 'SEARCH', { 
+      query, 
+      resultCount: results.results?.length || 0,
+      strategy: results.performance?.strategy 
     });
   }
-};
+
+  const responseTime = Date.now() - startTime;
+
+  res.json({
+    success: results.success,
+    data: results.results || [],
+    pagination: results.pagination,
+    performance: {
+      ...results.performance,
+      totalResponseTime: responseTime
+    },
+    aiInsights: results.aiInsights,
+    searchId: results.searchId,
+    meta: {
+      query,
+      filters,
+      strategy: results.performance?.strategy,
+      timestamp: results.timestamp
+    }
+  });
+
+  // Log performance metrics
+  logger.info('Search request completed', {
+    searchId: results.searchId,
+    query,
+    strategy: results.performance?.strategy,
+    resultCount: results.results?.length || 0,
+    responseTime,
+    userId: req.user?.id
+  });
+});
 
 /**
- * Autocomplete search suggestions
+ * @desc    Advanced search with explicit AI enhancement
+ * @route   POST /api/v1/search/advanced
+ * @access  Public
  */
-const autocompleteSearch = async (req, res) => {
-  try {
-    const { q: query, limit = 10 } = req.query;
+const advancedSearch = asyncHandler(async (req, res) => {
+  const {
+    query,
+    filters = {},
+    pagination = {},
+    requireAI = false,
+    analysisDepth = 'standard' // standard, deep, market_analysis
+  } = req.body;
 
-    if (!query || query.trim().length < 1) {
-      return res.json({
-        success: true,
-        data: []
-      });
+  if (!query || query.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Search query is required',
+      error_code: 'MISSING_QUERY'
+    });
+  }
+
+  const context = {
+    userId: req.user?.id,
+    requireAI,
+    analysisDepth,
+    userPreferences: req.user?.search_preferences,
+    isSubscribedUser: req.user?.subscription?.status === 'ACTIVE'
+  };
+
+  let results;
+
+  if (requireAI || analysisDepth !== 'standard') {
+    // Force AI-enhanced search
+    results = await executeAIEnhancedSearch(query, filters, pagination, context);
+  } else {
+    // Use intelligent routing
+    const searchRequest = { query, filters, pagination, context };
+    results = await executeIntelligentSearch(searchRequest);
+  }
+
+  res.json({
+    success: results.success,
+    data: results.results || [],
+    pagination: results.pagination,
+    performance: results.performance,
+    aiInsights: results.aiInsights,
+    searchId: results.searchId,
+    meta: {
+      query,
+      filters,
+      requireAI,
+      analysisDepth,
+      timestamp: results.timestamp
     }
-
-    const suggestions = await searchService.getAutocompleteSuggestions({
-      query: query.trim(),
-      limit: Math.min(parseInt(limit), 20),
-      user_id: req.user?.id
-    });
-
-    res.json({
-      success: true,
-      data: suggestions
-    });
-
-  } catch (error) {
-    logger.error('Autocomplete search failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Autocomplete failed',
-      message: error.message
-    });
-  }
-};
-
-/**
- * Search suggestions and popular queries
- */
-const getSearchSuggestions = async (req, res) => {
-  try {
-    const { category, location, limit = 10 } = req.query;
-
-    const suggestions = await searchService.getSearchSuggestions({
-      category,
-      location,
-      limit: parseInt(limit),
-      user_id: req.user?.id
-    });
-
-    res.json({
-      success: true,
-      data: {
-        trending: suggestions.trending || [],
-        popular_categories: suggestions.popular_categories || [],
-        recent_searches: suggestions.recent_searches || [],
-        personalized: suggestions.personalized || []
-      }
-    });
-
-  } catch (error) {
-    logger.error('Get search suggestions failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get suggestions',
-      message: error.message
-    });
-  }
-};
+  });
+});
 
 // ================================
 // IMAGE SEARCH ENDPOINTS
 // ================================
 
 /**
- * Search by image upload
+ * @desc    Search by uploaded image
+ * @route   POST /api/v1/search/image
+ * @access  Public
  */
-const searchByImage = async (req, res) => {
+const searchByImage = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({
+      success: false,
+      error: 'Image file is required',
+      error_code: 'MISSING_IMAGE'
+    });
+  }
+
+  const {
+    category,
+    min_price,
+    max_price,
+    condition,
+    location,
+    page = 1,
+    limit = 20
+  } = req.body;
+
+  // Build filters
+  const filters = {};
+  if (category) filters.category_id = category;
+  if (min_price !== undefined) filters.min_price = parseFloat(min_price);
+  if (max_price !== undefined) filters.max_price = parseFloat(max_price);
+  if (condition) filters.condition = condition.toUpperCase();
+  if (location) filters.location = location;
+
+  const pagination = {
+    page: Math.max(1, parseInt(page)),
+    limit: Math.min(50, Math.max(1, parseInt(limit)))
+  };
+
   try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image file is required'
+    const results = await executeImageSearch(
+      req.file.buffer,
+      req.file.mimetype,
+      filters,
+      pagination
+    );
+
+    // Track image search interaction
+    if (req.user?.id && results.success) {
+      trackUserInteraction(req.user.id, 'IMAGE_SEARCH', {
+        imageAnalysis: results.imageAnalysis?.productInfo,
+        resultCount: results.results?.length || 0
       });
     }
 
-    const {
-      category,
-      min_price,
-      max_price,
-      similarity_threshold = 0.7,
-      limit = 20
-    } = req.body;
-
-    // Generate image embedding
-    const imageEmbedding = await generateImageEmbedding(req.file.buffer);
-
-    const searchParams = {
-      image_embedding: imageEmbedding,
-      filters: {
-        category,
-        min_price: min_price ? parseFloat(min_price) : undefined,
-        max_price: max_price ? parseFloat(max_price) : undefined
-      },
-      similarity_threshold: parseFloat(similarity_threshold),
-      limit: Math.min(parseInt(limit), 50),
-      user_id: req.user?.id
-    };
-
-    const results = await searchService.searchByImage(searchParams);
-
-    logger.info('Image search performed', {
-      user_id: req.user?.id,
-      results_count: results.data.length,
-      similarity_threshold,
-      image_size: req.file.size
-    });
-
     res.json({
-      success: true,
-      data: results.data,
-      search_metadata: {
-        similarity_threshold,
-        total_results: results.data.length,
-        search_time: results.search_time || '< 1ms'
+      success: results.success,
+      data: results.results || [],
+      pagination: results.pagination,
+      imageAnalysis: results.imageAnalysis,
+      extractedSearchTerms: results.extractedSearchTerms,
+      performance: results.performance,
+      meta: {
+        originalFileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+        timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
-    logger.error('Image search failed:', error);
+    logger.error('Image search failed', {
+      error: error.message,
+      fileName: req.file.originalname,
+      fileSize: req.file.size,
+      userId: req.user?.id
+    });
+
     res.status(500).json({
       success: false,
       error: 'Image search failed',
-      message: error.message
+      message: error.message,
+      error_code: 'IMAGE_SEARCH_ERROR'
     });
   }
-};
+});
 
 /**
- * Search by image URL
+ * @desc    Search by image URL
+ * @route   POST /api/v1/search/image-url
+ * @access  Public
  */
-const searchByImageUrl = async (req, res) => {
+const searchByImageUrl = asyncHandler(async (req, res) => {
+  const { image_url, ...searchParams } = req.body;
+
+  if (!image_url) {
+    return res.status(400).json({
+      success: false,
+      error: 'Image URL is required',
+      error_code: 'MISSING_IMAGE_URL'
+    });
+  }
+
   try {
-    const {
-      image_url,
-      category,
-      min_price,
-      max_price,
-      similarity_threshold = 0.7,
-      limit = 20
-    } = req.body;
-
-    if (!image_url) {
-      return res.status(400).json({
-        success: false,
-        error: 'Image URL is required'
-      });
-    }
-
-    // Download and process image from URL
-    const imageBuffer = await searchService.downloadImageFromUrl(image_url);
-    const imageEmbedding = await generateImageEmbedding(imageBuffer);
-
-    const searchParams = {
-      image_embedding: imageEmbedding,
-      filters: {
-        category,
-        min_price: min_price ? parseFloat(min_price) : undefined,
-        max_price: max_price ? parseFloat(max_price) : undefined
-      },
-      similarity_threshold: parseFloat(similarity_threshold),
-      limit: Math.min(parseInt(limit), 50),
-      user_id: req.user?.id
-    };
-
-    const results = await searchService.searchByImage(searchParams);
-
-    logger.info('Image URL search performed', {
-      user_id: req.user?.id,
-      image_url,
-      results_count: results.data.length,
-      similarity_threshold
+    // Download image from URL
+    const axios = require('axios');
+    const imageResponse = await axios.get(image_url, {
+      responseType: 'arraybuffer',
+      timeout: 10000,
+      maxContentLength: 10 * 1024 * 1024 // 10MB limit
     });
 
+    const imageBuffer = Buffer.from(imageResponse.data);
+    const mimeType = imageResponse.headers['content-type'] || 'image/jpeg';
+
+    // Build filters and pagination from searchParams
+    const { category, min_price, max_price, condition, location, page = 1, limit = 20 } = searchParams;
+    
+    const filters = {};
+    if (category) filters.category_id = category;
+    if (min_price !== undefined) filters.min_price = parseFloat(min_price);
+    if (max_price !== undefined) filters.max_price = parseFloat(max_price);
+    if (condition) filters.condition = condition.toUpperCase();
+    if (location) filters.location = location;
+
+    const pagination = {
+      page: Math.max(1, parseInt(page)),
+      limit: Math.min(50, Math.max(1, parseInt(limit)))
+    };
+
+    const results = await executeImageSearch(imageBuffer, mimeType, filters, pagination);
+
     res.json({
-      success: true,
-      data: results.data,
-      search_metadata: {
-        similarity_threshold,
-        total_results: results.data.length,
-        search_time: results.search_time || '< 1ms',
-        source_image_url: image_url
+      success: results.success,
+      data: results.results || [],
+      pagination: results.pagination,
+      imageAnalysis: results.imageAnalysis,
+      extractedSearchTerms: results.extractedSearchTerms,
+      performance: results.performance,
+      meta: {
+        imageUrl: image_url,
+        mimeType,
+        timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
-    logger.error('Image URL search failed:', error);
+    logger.error('Image URL search failed', {
+      error: error.message,
+      imageUrl: image_url,
+      userId: req.user?.id
+    });
+
+    if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+      return res.status(400).json({
+        success: false,
+        error: 'Unable to access image URL',
+        error_code: 'INVALID_IMAGE_URL'
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Image URL search failed',
-      message: error.message
+      message: error.message,
+      error_code: 'IMAGE_URL_SEARCH_ERROR'
     });
   }
-};
+});
 
 // ================================
-// ADVANCED SEARCH ENDPOINTS
+// AUTOCOMPLETE & SUGGESTIONS
 // ================================
 
 /**
- * Advanced search with multiple criteria
+ * @desc    Smart autocomplete suggestions
+ * @route   GET /api/v1/search/autocomplete
+ * @access  Public
  */
-const advancedSearch = async (req, res) => {
-  try {
-    const {
-      query,
-      categories = [],
-      price_range,
-      conditions = [],
-      locations = [],
-      vendors = [],
-      date_range,
-      has_images = true,
-      has_videos,
-      has_3d_models,
-      rating_min,
-      sort_by = 'relevance',
-      sort_order = 'desc',
-      page = 1,
-      limit = 24
-    } = req.body;
+const getAutocomplete = asyncHandler(async (req, res) => {
+  const { q: query, limit = 10 } = req.query;
 
-    const searchParams = {
-      query: query?.trim(),
-      filters: {
-        categories: Array.isArray(categories) ? categories : [],
-        price_range: price_range ? {
-          min: price_range.min,
-          max: price_range.max
-        } : undefined,
-        conditions: Array.isArray(conditions) ? conditions : [],
-        locations: Array.isArray(locations) ? locations : [],
-        vendors: Array.isArray(vendors) ? vendors : [],
-        date_range: date_range ? {
-          start: new Date(date_range.start),
-          end: new Date(date_range.end)
-        } : undefined,
-        media_filters: {
-          has_images,
-          has_videos,
-          has_3d_models
-        },
-        rating_min: rating_min ? parseFloat(rating_min) : undefined
-      },
-      sorting: { sort_by, sort_order },
-      pagination: {
-        page: parseInt(page),
-        limit: Math.min(parseInt(limit), 100)
-      },
-      user_id: req.user?.id
+  if (!query || query.length < 2) {
+    return res.json({
+      success: true,
+      suggestions: [],
+      query: query || ''
+    });
+  }
+
+  const context = {
+    userId: req.user?.id,
+    userPreferences: req.user?.search_preferences
+  };
+
+  const results = await getSmartAutocomplete(query, context);
+
+  res.json({
+    success: results.success,
+    suggestions: results.suggestions.slice(0, parseInt(limit)),
+    query: results.query,
+    performance: {
+      strategy: 'autocomplete',
+      cached: false // Add caching logic
+    }
+  });
+});
+
+/**
+ * @desc    Get trending searches
+ * @route   GET /api/v1/search/trending
+ * @access  Public
+ */
+const getTrendingSearches = asyncHandler(async (req, res) => {
+  const { limit = 10, timeframe = '24h' } = req.query;
+
+  try {
+    // Calculate time range
+    const timeRanges = {
+      '1h': 1,
+      '24h': 24,
+      '7d': 24 * 7,
+      '30d': 24 * 30
     };
 
-    const results = await searchService.advancedSearch(searchParams);
+    const hoursBack = timeRanges[timeframe] || 24;
+    const cutoffTime = new Date(Date.now() - (hoursBack * 60 * 60 * 1000));
+
+    // Get trending searches from analytics
+    const trendingQueries = await dbRouter.searchAnalytics.groupBy({
+      by: ['query_text'],
+      where: {
+        query_text: { not: null },
+        created_at: { gte: cutoffTime }
+      },
+      _count: { query_text: true },
+      orderBy: { _count: { query_text: 'desc' } },
+      take: parseInt(limit)
+    });
+
+    // Get trending suggestions
+    const trendingSuggestions = await dbRouter.searchSuggestion.findMany({
+      where: { is_trending: true },
+      orderBy: { search_count: 'desc' },
+      take: parseInt(limit)
+    });
 
     res.json({
       success: true,
-      data: results.data,
-      pagination: results.pagination,
-      facets: results.facets,
-      search_metadata: {
-        query: query?.trim(),
-        total_results: results.pagination.total,
-        search_time: results.search_time || '< 1ms',
-        active_filters: Object.keys(searchParams.filters).filter(key => {
-          const value = searchParams.filters[key];
-          return value !== undefined && value !== null && 
-                 (Array.isArray(value) ? value.length > 0 : true);
-        })
+      trending: {
+        queries: trendingQueries.map(t => ({
+          query: t.query_text,
+          count: t._count.query_text
+        })),
+        suggestions: trendingSuggestions.map(s => ({
+          text: s.suggestion_text,
+          count: s.search_count
+        }))
+      },
+      timeframe,
+      meta: {
+        cutoffTime,
+        timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
-    logger.error('Advanced search failed:', error);
+    logger.error('Failed to get trending searches', { error: error.message });
     res.status(500).json({
       success: false,
-      error: 'Advanced search failed',
-      message: error.message
+      error: 'Failed to get trending searches',
+      trending: { queries: [], suggestions: [] }
     });
   }
-};
+});
+
+// ================================
+// SEARCH ANALYTICS & INSIGHTS
+// ================================
 
 /**
- * Saved search management
+ * @desc    Get search strategy analysis (for debugging/optimization)
+ * @route   POST /api/v1/search/analyze
+ * @access  Private (Admin or Developer)
  */
-const saveSearch = async (req, res) => {
-  try {
-    const {
-      name,
-      query,
-      filters,
-      notify_on_new_results = false
-    } = req.body;
+const analyzeSearchQuery = asyncHandler(async (req, res) => {
+  const { query, context = {} } = req.body;
 
-    if (!name || !query) {
-      return res.status(400).json({
-        success: false,
-        error: 'Search name and query are required'
-      });
-    }
-
-    const savedSearch = await searchService.saveSearch({
-      user_id: req.user.id,
-      name,
-      query,
-      filters: filters || {},
-      notify_on_new_results
-    });
-
-    res.status(201).json({
-      success: true,
-      data: { saved_search: savedSearch },
-      message: 'Search saved successfully'
-    });
-
-  } catch (error) {
-    logger.error('Save search failed:', error);
-    res.status(500).json({
+  if (!query) {
+    return res.status(400).json({
       success: false,
-      error: 'Failed to save search',
-      message: error.message
+      error: 'Query is required for analysis',
+      error_code: 'MISSING_QUERY'
     });
   }
-};
 
-/**
- * Get user's saved searches
- */
-const getSavedSearches = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
+    const strategy = analyzeSearchStrategy(query, context);
 
-    const savedSearches = await searchService.getUserSavedSearches({
-      user_id: req.user.id,
-      page: parseInt(page),
-      limit: Math.min(parseInt(limit), 50)
+    // Get search performance stats for this type of query
+    const similar_searches = await dbRouter.searchAnalytics.findMany({
+      where: {
+        query_text: { contains: query, mode: 'insensitive' }
+      },
+      take: 10,
+      orderBy: { created_at: 'desc' }
     });
 
     res.json({
       success: true,
-      data: savedSearches.data,
-      pagination: savedSearches.pagination
-    });
-
-  } catch (error) {
-    logger.error('Get saved searches failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get saved searches',
-      message: error.message
-    });
-  }
-};
-
-/**
- * Execute saved search
- */
-const executeSavedSearch = async (req, res) => {
-  try {
-    const { searchId } = req.params;
-    const { page = 1, limit = 24 } = req.query;
-
-    const results = await searchService.executeSavedSearch({
-      search_id: searchId,
-      user_id: req.user.id,
-      page: parseInt(page),
-      limit: Math.min(parseInt(limit), 100)
-    });
-
-    res.json({
-      success: true,
-      data: results.data,
-      pagination: results.pagination,
-      saved_search: results.saved_search,
-      search_metadata: {
-        total_results: results.pagination.total,
-        search_time: results.search_time || '< 1ms',
-        last_executed: new Date().toISOString()
+      analysis: {
+        strategy,
+        queryComplexity: getQueryComplexity(query),
+        estimatedCost: strategy.estimatedCost,
+        recommendedApproach: strategy.useAI ? 'ai_enhanced' : 'traditional',
+        confidence: strategy.confidenceScore
+      },
+      historicalData: {
+        similarSearches: similar_searches.length,
+        averageResults: similar_searches.reduce((acc, s) => acc + s.results_count, 0) / (similar_searches.length || 1),
+        averageResponseTime: similar_searches.reduce((acc, s) => acc + (s.response_time_ms || 0), 0) / (similar_searches.length || 1)
+      },
+      meta: {
+        query,
+        timestamp: new Date().toISOString()
       }
     });
 
   } catch (error) {
-    logger.error('Execute saved search failed:', error);
+    logger.error('Search analysis failed', { error: error.message, query });
     res.status(500).json({
       success: false,
-      error: 'Failed to execute saved search',
+      error: 'Search analysis failed',
       message: error.message
     });
   }
-};
-
-// ================================
-// SEARCH ANALYTICS ENDPOINTS
-// ================================
+});
 
 /**
- * Get search analytics (Admin only)
+ * @desc    Get search performance metrics
+ * @route   GET /api/v1/search/metrics
+ * @access  Private (Admin only)
  */
-const getSearchAnalytics = async (req, res) => {
+const getSearchMetrics = asyncHandler(async (req, res) => {
+  const { timeframe = '24h' } = req.query;
+
   try {
-    if (!req.user || !['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        error: 'Admin privileges required'
-      });
-    }
+    const hoursBack = {
+      '1h': 1,
+      '24h': 24,
+      '7d': 24 * 7,
+      '30d': 24 * 30
+    }[timeframe] || 24;
 
-    const {
-      start_date,
-      end_date,
-      category,
-      limit = 100
-    } = req.query;
+    const cutoffTime = new Date(Date.now() - (hoursBack * 60 * 60 * 1000));
 
-    const analytics = await searchService.getSearchAnalytics({
-      start_date: start_date ? new Date(start_date) : undefined,
-      end_date: end_date ? new Date(end_date) : undefined,
-      category,
-      limit: parseInt(limit)
-    });
+    // Get comprehensive search metrics
+    const [
+      totalSearches,
+      averageResponseTime,
+      queryTypeBreakdown,
+      topQueries,
+      performanceByStrategy
+    ] = await Promise.all([
+      // Total searches
+      dbRouter.searchAnalytics.count({
+        where: { created_at: { gte: cutoffTime } }
+      }),
+
+      // Average response time
+      dbRouter.searchAnalytics.aggregate({
+        where: { created_at: { gte: cutoffTime } },
+        _avg: { response_time_ms: true }
+      }),
+
+      // Query type breakdown
+      dbRouter.searchAnalytics.groupBy({
+        by: ['query_type'],
+        where: { created_at: { gte: cutoffTime } },
+        _count: { query_type: true }
+      }),
+
+      // Top queries
+      dbRouter.searchAnalytics.groupBy({
+        by: ['query_text'],
+        where: {
+          query_text: { not: null },
+          created_at: { gte: cutoffTime }
+        },
+        _count: { query_text: true },
+        orderBy: { _count: { query_text: 'desc' } },
+        take: 10
+      }),
+
+      // Performance by strategy (if you track this)
+      dbRouter.searchAnalytics.findMany({
+        where: { created_at: { gte: cutoffTime } },
+        select: {
+          response_time_ms: true,
+          results_count: true,
+          query_type: true
+        }
+      })
+    ]);
 
     res.json({
       success: true,
-      data: analytics
+      metrics: {
+        totalSearches,
+        averageResponseTime: averageResponseTime._avg.response_time_ms || 0,
+        queryTypes: queryTypeBreakdown,
+        topQueries: topQueries.map(q => ({
+          query: q.query_text,
+          count: q._count.query_text
+        })),
+        performance: {
+          averageResultCount: performanceByStrategy.reduce((acc, s) => acc + s.results_count, 0) / (performanceByStrategy.length || 1),
+          medianResponseTime: calculateMedian(performanceByStrategy.map(s => s.response_time_ms || 0))
+        }
+      },
+      timeframe,
+      generatedAt: new Date().toISOString()
     });
 
   } catch (error) {
-    logger.error('Get search analytics failed:', error);
+    logger.error('Failed to get search metrics', { error: error.message });
     res.status(500).json({
       success: false,
-      error: 'Failed to get search analytics',
+      error: 'Failed to get search metrics',
       message: error.message
     });
   }
-};
-
-/**
- * Get popular search terms
- */
-const getPopularSearchTerms = async (req, res) => {
-  try {
-    const {
-      period = '7d', // 1d, 7d, 30d
-      category,
-      limit = 20
-    } = req.query;
-
-    const popularTerms = await searchService.getPopularSearchTerms({
-      period,
-      category,
-      limit: parseInt(limit)
-    });
-
-    res.json({
-      success: true,
-      data: popularTerms
-    });
-
-  } catch (error) {
-    logger.error('Get popular search terms failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get popular search terms',
-      message: error.message
-    });
-  }
-};
+});
 
 // ================================
-// SEARCH FILTERS & FACETS
+// UTILITY FUNCTIONS
 // ================================
 
 /**
- * Get available search filters
+ * Track user interaction for personalization
+ * @param {string} userId - User ID
+ * @param {string} interactionType - Type of interaction
+ * @param {Object} metadata - Additional metadata
  */
-const getSearchFilters = async (req, res) => {
+const trackUserInteraction = async (userId, interactionType, metadata = {}) => {
   try {
-    const { category, query } = req.query;
-
-    const filters = await searchService.getAvailableFilters({
-      category,
-      query: query?.trim(),
-      user_id: req.user?.id
+    await dbRouter.userInteraction.create({
+      data: {
+        user_id: userId,
+        listing_id: metadata.listingId || null,
+        interaction_type: interactionType,
+        metadata: JSON.stringify(metadata)
+      }
     });
-
-    res.json({
-      success: true,
-      data: filters
-    });
-
   } catch (error) {
-    logger.error('Get search filters failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get search filters',
-      message: error.message
-    });
+    logger.error('Failed to track user interaction', { error: error.message, userId, interactionType });
   }
 };
 
 /**
- * Get search facets/aggregations
+ * Calculate query complexity score
+ * @param {string} query - Search query
+ * @returns {Object} Complexity analysis
  */
-const getSearchFacets = async (req, res) => {
-  try {
-    const { query, filters = {} } = req.body;
+const getQueryComplexity = (query) => {
+  if (!query) return { score: 0, level: 'none' };
 
-    const facets = await searchService.getSearchFacets({
-      query: query?.trim(),
-      filters,
-      user_id: req.user?.id
-    });
+  const words = query.split(/\s+/);
+  const hasQuotes = query.includes('"');
+  const hasOperators = /\band\b|\bor\b|\bnot\b/i.test(query);
+  const hasSpecialChars = /[+\-*"()~]/.test(query);
+  
+  let score = words.length;
+  if (hasQuotes) score += 2;
+  if (hasOperators) score += 3;
+  if (hasSpecialChars) score += 1;
 
-    res.json({
-      success: true,
-      data: facets
-    });
+  const level = score <= 2 ? 'simple' : score <= 5 ? 'moderate' : 'complex';
 
-  } catch (error) {
-    logger.error('Get search facets failed:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get search facets',
-      message: error.message
-    });
-  }
+  return { score, level, factors: { words: words.length, hasQuotes, hasOperators, hasSpecialChars } };
+};
+
+/**
+ * Calculate median value from array
+ * @param {Array} numbers - Array of numbers
+ * @returns {number} Median value
+ */
+const calculateMedian = (numbers) => {
+  if (numbers.length === 0) return 0;
+  const sorted = numbers.sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 };
 
 // ================================
@@ -636,28 +683,22 @@ const getSearchFacets = async (req, res) => {
 // ================================
 
 module.exports = {
-  // Text search
+  // Main search endpoints
   searchListings,
-  autocompleteSearch,
-  getSearchSuggestions,
-
-  // Image search
+  advancedSearch,
   searchByImage,
   searchByImageUrl,
-
-  // Advanced search
-  advancedSearch,
-
-  // Saved searches
-  saveSearch,
-  getSavedSearches,
-  executeSavedSearch,
-
-  // Analytics
-  getSearchAnalytics,
-  getPopularSearchTerms,
-
-  // Filters & facets
-  getSearchFilters,
-  getSearchFacets
+  
+  // Autocomplete and suggestions
+  getAutocomplete,
+  getTrendingSearches,
+  
+  // Analytics and insights
+  analyzeSearchQuery,
+  getSearchMetrics,
+  
+  // Utility functions (for testing)
+  trackUserInteraction,
+  getQueryComplexity,
+  calculateMedian
 };
